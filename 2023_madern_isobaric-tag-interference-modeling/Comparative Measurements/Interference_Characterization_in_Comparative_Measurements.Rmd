@@ -1,0 +1,813 @@
+---
+title: "Interference Characterization on the basis of variations in measurement variables"
+author: "Moritz Madern"
+date: "2022-06-01"
+---
+
+
+
+```{r load required packages}
+
+library(limma)        # Bioconductor
+library(ROCR)
+library(ggplot2)
+library(IHW)          # Bioconductor
+library(RColorBrewer)
+library(MSnbase)      # Bioconductor
+library(tidyverse)
+
+```
+
+
+```{r set parameters}
+
+## specify search result filepath (character vector, each entry pointing to PSM table of the respective experiment)
+search_results_filepaths =  c("diff_complexities/high/psm.tsv",
+                              "diff_complexities/medium/psm.tsv",
+                              "diff_complexities/low/psm.tsv")
+
+# specify output directory 
+output_dir = "diff_complexities"
+
+## specify names of the experiments (character vector). 
+exp_names = c("1", "1/3", "1/6")
+
+## what is the experiment about? change xlab
+xlab="Sample complexity"
+
+## specify reporter ion intensity column patterns (character, regular expression)
+reporterIon_pattern ="sample[.][0-9][0-9]"
+
+## define group vector
+groups = c("blank", "blank", "blank", "Group0", "Group6", "Group0", "Group6", "Group0", "Group6", "blank", "Group9", "Group12", "Group9","Group12", "Group9", "Group12")
+
+## define organism column name
+OrganismInfocolName = OrganismInfocolName = c("Protein", "Mapped.Proteins")
+
+## define DE organism name and NDE organism name as written in organism column name
+OS_DE = "YEAST"
+OS_NDE = "HUMAN"
+
+## peptide column
+peptide_column = "Peptide"
+
+## protein column
+protein_column = "Protein"
+
+## samplecolors
+pal <- colorRampPalette(colors=c("white", "turquoise", "black"))
+N <- length(search_results_filepaths)
+samplecolors = pal(N + 2)[2:(N+1)]
+samplecolors=c("#FCCDB8", "#FB684A", "#FD0606")
+
+
+## impurity correction matrix
+impurity_matrix  = as.matrix(read.csv(file="impurity_matrix_tmtpro.csv",
+                                      sep=",", header=TRUE, row.names = 1))
+
+## subset reporterIons for normalization because non-Empty channels
+subset_reportersnonEmpty <- c(4:9,11:16)
+
+## filter_maxIT
+filter_maxIT <- FALSE
+
+```
+
+
+```{r write required functions}
+
+### impurity correction function ###
+impurity_correction <- function(impuritymatrix, df_msms, reporterIon_columnnames) {
+  
+  # read in impurity matrix to be used to correct for isotopic impurities
+  writeLines("Impurity Matrix:")
+  print(impuritymatrix)
+  inverted_transposed_impuritymatrix <- solve(t(impuritymatrix))  # using linear algebra, this matrix can be used to calculate the corrected intensities
+    
+  # manually calculate impurity correction:
+  m_uncorrected <- as.matrix(df_msms[,reporterIon_columnnames])
+  m_uncorrected[is.na(m_uncorrected)] <- 0
+  rownames(m_uncorrected) <- df_msms$unique_id
+  m_corrected <- m_uncorrected
+    
+  for (i in 1:nrow(m_uncorrected)) {
+    # extract row_i
+    row_i <- m_uncorrected[i,]
+      
+    # calculate corrected intensities, replace any negative values with 0
+    row_i_corrected <- inverted_transposed_impuritymatrix %*% row_i
+    row_i_corrected <- pmax(row_i_corrected,0)
+      
+    # store in m_corrected 
+    m_corrected[i,] <- row_i_corrected
+  }
+    
+  # finally, replace values that were originally 0 again with 0 (i.e. NA). Else they would mimic real observed intensities, which they are not!
+  m_corrected[m_uncorrected == 0] <- 0
+    
+  # plot before and after correction:
+  par(mfrow=c(1,1))
+  barplot(colSums(m_uncorrected, na.rm = TRUE), las=2, main="colsums before impurity correction")
+  barplot(colSums(m_corrected,na.rm=TRUE), las=2, main="colsums after impurity correction")
+    
+  # replace uncorrected intensities in df_msms with corrected intensities:
+  df_msms[,reporterIon_columnnames] <- m_corrected
+  
+  return(df_msms)
+}
+
+
+
+### LOESS normalization function ###
+loess_norm <- function(m){
+  m[m==0] <- NA
+  m_copy_log <- log2(m)  
+  m_norm <- 2^normalizeBetweenArrays(m_copy_log, method="cyclicloess", cyclic.method = "fast")
+  return(m_norm)
+}
+
+
+
+###  ROC calculation function ###
+ROC_function <- function (matrix_group1, matrix_group2, true_hypothesis = NULL, ROC = TRUE, trend_limma=TRUE){
+  # note: true_hypothesis should be a logical vector; with TRUE when Nullhypothesis is true, else FALSE
+  # note: the adjusted p-values are calculated via Benjamini Hochberg, i.e. they control the FDR (and not the FWER)
+  # The ROC-curve uses the adjusted p-values
+  
+  # check if dimensions are equal
+  if( nrow(matrix_group1) != nrow(matrix_group2)){
+    stop("dimension of two matrixes has to be equal")
+  }
+  
+  # impute with minimum reporter  intensity when NA (rarely the case)
+  matrix_group1[is.na(matrix_group1)] 
+  matrix_group2[is.na(matrix_group2)] 
+  
+  # initiate/create output vectors
+  fc <- apply(matrix_group2, MARGIN=1, FUN=mean, na.rm=TRUE) - apply(matrix_group1, MARGIN=1, FUN=mean, na.rm=TRUE)
+  p_val <- numeric(nrow(matrix_group1))
+  data_plot <- data.frame(fc=fc, true_hypothesis=true_hypothesis)
+
+  # create design matrix (X-matrix, which will be applied for each protein/psm individually)
+  design <- model.matrix(~factor(c(rep("group1", times=ncol(matrix_group1)), rep("group2", times=ncol(matrix_group2))), levels=c("group1", "group2")))
+  colnames(design) <-  c("group1","group2")
+  design
+  # do limma linear model
+  fit <- lmFit(cbind(matrix_group1, matrix_group2), design)
+  fit_ebayes <- eBayes(fit, trend=trend_limma)  
+  plotSA(fit_ebayes)
+  abline(v=15, col="red")
+  abline(v=20, col="violet")
+  abline(h=0.2, col="green")
+  abline(h=0.4, col="orange")
+  LIMMAresults <- topTable(fit_ebayes, number=Inf, coef= "group2", adjust="BH", sort.by="none")
+  # save limma results (p.val and adj.p.val)
+  p_val <- LIMMAresults$P.Value
+  adj_p_val <- LIMMAresults$adj.P.Val
+  
+  # calculate ROC curves
+  if (ROC){
+    pval_roc <- p_val
+    pred <- prediction(pval_roc, as.numeric(true_hypothesis))  
+    perf <- performance(pred,"tpr","fpr")
+    par(xpd=FALSE)
+    cutoff <- sort(unique(c(10^(-(30:3)), 1.2*10^(-(30:3)), 1.4*10^(-(30:3)), 1.6*10^(-(30:3)), 1.8*10^(-(30:3)), 2.010^(-(30:3)), seq(from=0, to=1, by=0.000001))))
+    roc_plot_values <- sapply(cutoff, FUN=function(i){
+      tpr_roc_i <- sum(pval_roc[!true_hypothesis] <= i)/(sum(!true_hypothesis))
+      fpr_roc_i <- sum(pval_roc[true_hypothesis] <= i)/(sum(true_hypothesis))
+      res_i <- cbind(tpr_roc_i, fpr_roc_i)
+      return(res_i)
+    }) 
+    
+    # get AUC:
+    auc <- performance(pred, measure = "auc")
+    auc_value <- auc@y.values[[1]]
+    
+    # print fp and tp numbers at p-value cutoff 0.05
+    positives <- sum(!true_hypothesis)
+    tp_pval <- sum(p_val[!true_hypothesis] <= 0.05)
+    fn_pval <- sum(p_val[!true_hypothesis] > 0.05)
+    fp_pval <- sum(p_val[true_hypothesis] <= 0.05)
+    tn_pval <- sum(p_val[true_hypothesis] > 0.05)
+    conf_matrix_pval_0.05 <- matrix(c(tp_pval, fn_pval, fp_pval, tn_pval), byrow = FALSE, ncol=2)
+    rownames(conf_matrix_pval_0.05) <- c("predicted positive", "predicted negative")
+    colnames(conf_matrix_pval_0.05) <- c("positive", "negative")
+    # print(conf_matrix_pval_0.05)
+    
+    # print fp and tp numbers at adj. p-value cutoff 0.05
+    tp_adj_pval <- sum(adj_p_val[!true_hypothesis] <= 0.05)
+    fn_adj_pval <- sum(adj_p_val[!true_hypothesis] > 0.05)
+    fp_adj_pval <- sum(adj_p_val[true_hypothesis] <= 0.05)
+    tn_adj_pval <- sum(adj_p_val[true_hypothesis] > 0.05)
+    conf_matrix_adj_pval_0.05 <- matrix(c(tp_adj_pval, fn_adj_pval, fp_adj_pval, tn_adj_pval), byrow = FALSE, ncol=2)
+    rownames(conf_matrix_adj_pval_0.05) <- c("predicted positive", "predicted negative")
+    colnames(conf_matrix_adj_pval_0.05) <- c("positive", "negative")
+    # print(conf_matrix_adj_pval_0.05)
+  }
+  return(list(FC=fc,
+              true_hypothesis=true_hypothesis,
+              p_val=p_val,
+              adj_p_val=adj_p_val, 
+              ROC_object=perf, 
+              auc_value=auc_value,
+              conf_matrix_pval=conf_matrix_pval_0.05,
+              conf_matrix_adj_pval=conf_matrix_adj_pval_0.05,
+              ROC_coordinates = t(roc_plot_values),
+              ROC_coordinates_pval_0.05= c(fp_pval/(fp_pval+tn_pval),tp_pval/(tp_pval + fn_pval))))
+}
+
+```
+
+
+```{r read in data and perform filtering (for unambigous and quantified PSMs) }
+
+## Read in PSM tables of all experiments, store in a list
+N <- length(search_results_filepaths)
+listSearchRes <- vector(mode="list", length=N)
+for (i in 1:N){
+  listSearchRes[[i]] <- read.delim(search_results_filepaths[i], sep="\t", header=TRUE, stringsAsFactors = FALSE)
+}
+names(listSearchRes) <- exp_names
+
+
+## check how many PSMs per PSM-table
+writeLines("\nPSMs before Filtering:")
+sapply(listSearchRes, FUN=nrow)
+
+
+## Remove PSM rows with 0 reporter ion entries throughout. Also change 0 to NA
+for (i in 1:N){
+  df_i <- listSearchRes[[i]] 
+  bool_reporters <- grepl(names(df_i), pattern=reporterIon_pattern)
+  sum(bool_reporters)
+  m_i <- as.matrix(df_i[,bool_reporters])
+  ind_keep <- which(!apply(m_i[,groups %in% c("Group6", "Group9", "Group12")] ==0, FUN=any, MARGIN = 1))
+  listSearchRes[[i]] <- df_i[ind_keep,]
+}
+
+
+## Remove Sequences matching multiple Organisms
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  if (length(OrganismInfocolName)==1){
+    organism_col <- df_i[,OrganismInfocolName]
+  }
+  if (length(OrganismInfocolName)==2){
+    organism_col <- paste0(df_i[,OrganismInfocolName[1]],df_i[,OrganismInfocolName[2]])
+  }
+  bool_org1 <- grepl(organism_col, pattern=OS_DE)
+  bool_org2 <- grepl(organism_col, pattern = OS_NDE)
+  bool_combined <- bool_org1 & bool_org2
+  bool_keep <- !bool_combined
+  listSearchRes[[i]] <- df_i[bool_keep,]
+}
+  
+
+## Write table of total quantified unambiguous PSMs
+tab_quantifiedPSMs <- sapply(listSearchRes, FUN=nrow)
+writeLines("\nPSMs after Filtering:")
+tab_quantifiedPSMs
+write.table(tab_quantifiedPSMs, file=paste0(output_dir, "/table_quantified_unambiguous_PSMs.txt"),sep="\t",col.names = FALSE)
+
+```
+
+
+```{r aggregate to different levels (peptide and protein level)}
+
+## Aggregate Intensities to peptide sequence level
+writeLines("Peptide Sequence:")
+listSearchRes_pep <- listSearchRes
+for (i in 1:N){
+  print(paste0(exp_names[i], ", Aggregation to unique peptide features") )
+  df_i <- listSearchRes[[i]]
+  features <- df_i[,peptide_column]
+  unique_features <- unique(features)
+  for (u in 1:length(unique_features)){
+    bool_keep <- df_i[,peptide_column] %in% unique_features[u]
+    df_i_u <- df_i[bool_keep,]
+    df_i_u_final <- df_i_u[1,]
+    df_i_u_final$num_PSMs <- sum(bool_keep)
+    bool_reporters_i_u <- grepl(names(df_i_u), pattern=reporterIon_pattern)
+    bool_reporters_i_u
+    reporters_i_u <- colSums(df_i_u[,bool_reporters_i_u, drop=FALSE], na.rm=TRUE)
+    df_i_u_final[,bool_reporters_i_u] <- reporters_i_u
+    if (u == 1) {
+      df_i_final <- df_i_u_final
+    } else {
+      df_i_final <- rbind(df_i_final, df_i_u_final)
+    }
+  }
+  listSearchRes_pep[[i]]  <- df_i_final
+}
+writeLines("Number of dimensions  (peptide) per experiment:")
+sapply(listSearchRes_pep, FUN=dim)
+
+
+## Save number of quantified peptides
+tab_quantifiedPeptides <- sapply(listSearchRes_pep, FUN=nrow)
+write.table(tab_quantifiedPeptides, file=paste0(output_dir, "/tab_quantified_unambiguous_peptides.txt"),sep="\t",col.names = FALSE)
+pdf(file = paste0(output_dir, "/barplot_quantified_unambiguous_peptides.pdf"), width = 6, height=4)
+par(mar=c(2,5,2,3))
+barplot(tab_quantifiedPeptides/max(tab_quantifiedPeptides)*1, names.arg = exp_names, las=1, cex.names = 0.8, cex.axis = 0.8, main="", ylab="Relative number \n of quantified peptides", col=samplecolors, border = samplecolors)
+dev.off()
+
+  
+## Aggregate Intensities to protein level
+writeLines("Proteins:")
+listSearchRes_prot <- listSearchRes
+for (i in 1:N){
+  print(paste0(exp_names[i], ", Aggregation to unique protein features") )
+  df_i <- listSearchRes[[i]]
+  features <- df_i[,protein_column]
+  unique_features <- unique(features)
+  for (u in 1:length(unique_features)){
+    bool_keep <- df_i[,protein_column] %in% unique_features[u]
+    df_i_u <- df_i[bool_keep,]
+    df_i_u_final <- df_i_u[1,]
+    bool_reporters_i_u <- grepl(names(df_i_u), pattern=reporterIon_pattern)
+    bool_reporters_i_u
+    reporters_i_u <- colSums(df_i_u[,bool_reporters_i_u, drop=FALSE], na.rm=TRUE)
+    reporters_i_u
+    df_i_u_final[,bool_reporters_i_u] <- reporters_i_u
+    if (u == 1) {
+      df_i_final <- df_i_u_final
+    } else {
+      df_i_final <- rbind(df_i_final, df_i_u_final)
+    }
+  }
+  listSearchRes_prot[[i]]  <- df_i_final
+}
+writeLines("Number of dimensions (protein) per experiment:")
+sapply(listSearchRes_prot, FUN=dim)
+
+
+## Save number of quantified peptides, and save pdf
+tab_quantifiedProteins <- sapply(listSearchRes_prot, FUN=nrow)
+write.table(tab_quantifiedProteins, file=paste0(output_dir, "/table_quantified_unambiguous_proteins.txt"),sep="\t",col.names = FALSE)
+pdf(file = paste0(output_dir, "/barplot_quantified_unambiguous_proteins.pdf"), width = 6, height=4)
+par(mar=c(2,5,2,3))
+barplot(tab_quantifiedProteins/max(tab_quantifiedProteins)*1, names.arg = exp_names, las=1, cex.names = 0.8, cex.axis = 0.8, main="", ylab="Relative number \n of quantified proteins", col=samplecolors, border = samplecolors)
+dev.off()
+
+```
+
+
+```{r aggregate to unique modified peptides (+ unique charge). Then filter for shared peptide features}
+
+## Aggregate Intensities to modified peptide level
+writeLines("modified Peptides:")
+listSearchRes_modPep <- listSearchRes
+for (i in 1:N){
+  print(paste0(exp_names[i], ", Aggregation to unique modified peptide features") )
+  df_i <- listSearchRes[[i]]
+  df_i$modpep <- paste0(df_i$Modified.Peptide, "_", df_i$Charge)
+  features <- df_i$modpep
+  unique_features <- unique(features)
+  max_IT_i <- max(df_i$IT, na.rm=TRUE)
+  rm(df_i_final)
+  
+  for (u in 1:length(unique_features)){
+    bool_keep <- df_i$modpep %in% unique_features[u]
+    df_i_u <- df_i[bool_keep,]
+    dim(df_i_u)
+    df_i_u$total_reporterIntensity <- rowSums(df_i_u[,grepl(names(df_i_u), pattern=reporterIon_pattern)],na.rm=TRUE)
+    # df_i_u <- df_i_u[which.min(df_i_u$Retention),]
+    if (filter_maxIT){
+      all_maxIT_i_u <- all(df_i_u$IT == max_IT_i)
+    }
+    df_i_u_final <- df_i_u[which.max(df_i_u$total_reporterIntensity), ,drop=FALSE]
+    if (filter_maxIT && !all_maxIT_i_u){
+      next
+    }
+    
+    if (!exists("df_i_final")) {
+      df_i_final <- df_i_u_final
+    } else {
+      df_i_final <- rbind(df_i_final, df_i_u_final)
+    }
+  }
+  listSearchRes_modPep[[i]]  <- df_i_final
+}
+writeLines("Number of dimensions (modified peptide) per experiment:")
+sapply(listSearchRes_modPep, FUN=dim)
+
+
+## Save number of quantified mod peptides
+tab_quantifiedModpep <- sapply(listSearchRes_modPep, FUN=nrow)
+write.table(tab_quantifiedModpep, file=paste0(output_dir, "/table_quantified_unambiguous_mod_peptides.txt"),sep="\t",col.names = FALSE)
+pdf(file = paste0(output_dir, "/barplot_quantified_unambiguous_mod_peptides.pdf"), width = 6, height=4)
+par(mar=c(2,5,2,3))
+barplot(tab_quantifiedModpep/max(tab_quantifiedModpep)*1, names.arg = exp_names, las=1, cex.names = 0.8, cex.axis = 0.8, main="", ylab="Relative number \n of quantified modified peptides", col=samplecolors, border = samplecolors)
+dev.off()
+  
+
+## Proceed with modified peptide aggregation level
+listSearchRes <- listSearchRes_modPep
+modPep_column <- "modpep"
+writeLines("Number of dimensions for subsequent analysis steps (should be modpep):")
+sapply(listSearchRes, FUN=dim)
+
+
+## Create Venn diagramm of shared modified peptide features:
+library(ggVennDiagram)
+list_Venn <- vector(mode="list", length=N)
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  list_Venn[[i]] <- df_i[,modPep_column]
+}
+
+
+## Create venn diagram
+names(list_Venn) <- exp_names
+vennplot <- ggVennDiagram(list_Venn, label="both", label_alpha=0, set_color = samplecolors, edge_size = 2, label_size = 5) +
+            scale_color_manual(values=samplecolors) +
+            scale_size_manual(values=c(200,200,200,200))+
+            scale_fill_gradient(low="white", high="darkgrey")
+print(vennplot)
+pdf(file = paste0(output_dir, "/vennDiagramm_quantModPeptides.pdf"), width = 6, height=4)
+vennplot
+dev.off()
+vennplot
+
+
+## Reduce Data of all files to shared features only (intersection)
+listUnique <- vector(mode="list", length=N)
+for (i in 1:N){
+  listUnique[[i]] <- unique(listSearchRes[[i]][modPep_column])
+}
+str(listUnique)
+all_unique <- unique(unlist(listUnique))
+str(all_unique)
+all_unique_matrix <- matrix(FALSE, nrow=length(all_unique), ncol=length(listUnique))
+for (i in 1:N){
+  res_i <- listSearchRes[[i]]
+  all_unique_matrix[,i] <- all_unique %in% res_i[,modPep_column]
+}
+all_keep <- all_unique[apply(all_unique_matrix, FUN=all, MARGIN = 1)]
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  keep_i <- df_i[,modPep_column] %in% all_keep
+  listSearchRes[[i]] <- df_i[keep_i,]
+}
+writeLines("Number of dimensions after filtering for shared modPep features:")
+sapply(listSearchRes, FUN=dim)
+
+  
+## Make order identical in search results of all samples
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  listSearchRes[[i]] <- df_i[order(df_i[,modPep_column]),]
+  print(listSearchRes[[i]][1:3,modPep_column] )
+}
+sapply(listSearchRes, FUN=dim)
+
+```
+
+
+```{r impurity correction and normalization}
+
+## Do impurity correction of reporter ions for each search result
+if (!is.null(impurity_matrix)){
+  for (i in 1:N){
+    df_i <- listSearchRes[[i]]
+    reporter_names <- grep(names(df_i), pattern=reporterIon_pattern, value=TRUE)
+    listSearchRes[[i]] <- impurity_correction(impuritymatrix = impurity_matrix, df_msms = df_i, reporterIon_columnnames = reporter_names)
+  }
+}
+
+
+## LOESS-normalization
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  reporter_names <- grep(names(df_i), pattern=reporterIon_pattern, value=TRUE)
+  m_i <- df_i[,reporter_names][subset_reportersnonEmpty]
+  m_i_norm <- loess_norm(m_i)
+  barplot(colSums(m_i, na.rm = TRUE), main="before normalization", las=2)
+  barplot(colSums(m_i_norm, na.rm = TRUE), main="after normalization", las=2)
+  df_i[,reporter_names][subset_reportersnonEmpty] <- m_i_norm
+  listSearchRes[[i]] <- df_i
+} 
+
+```
+
+
+```{r calculate Observed Interference Level (OIL)}
+
+## Create DE expression ground truth column in each search result based on organism info
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  df_i$DE <- ifelse(  grepl(df_i[,OrganismInfocolName[1]], pattern= OS_DE), yes="+", no="")  
+  print(table(df_i$DE))
+  listSearchRes[[i]] <- df_i
+}  
+  
+
+## Calculate OIL for each feature
+listOIL <- vector(mode="list", length=N)
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  reporter_names <- grep(names(df_i), pattern=reporterIon_pattern, value=TRUE)
+  m_i <- df_i[,reporter_names]
+  m_i_group0 <- m_i[,groups %in% "Group0"]
+  m_i_other <- m_i[,groups %in% c("Group6", "Group9", "Group12")]
+  OIL_i <- pmin(rowMeans(m_i_group0, na.rm=TRUE)/rowMeans(m_i_other, na.rm = TRUE),1)
+  listOIL[[i]] <- data.frame(OIL=OIL_i, exp_names = as.factor(exp_names[i]), DE=df_i$DE,Peptide= df_i[,modPep_column])
+}
+df_OIL <- do.call("rbind", listOIL)
+df_OIL$exp_names <- factor(df_OIL$exp_names, levels=exp_names)
+
+
+## Plot result and save
+oil_plot <-  ggplot(df_OIL[df_OIL$DE == "+",]) +
+               geom_line(aes(y=OIL,x = exp_names, group=Peptide), cex=0.1, col="black", alpha=0.1) +
+               geom_boxplot(aes(y=OIL,x=exp_names, col=exp_names),cex=1.25, alpha=0.7) +
+               scale_color_manual(values=samplecolors)+
+               ylab("Observed interference level")+
+               xlab(xlab) +
+               theme_classic() +
+               theme(legend.position = "none")
+pdf(file = paste0(output_dir, "/OIL_shared_quantified_peptides.pdf"), width = 5, height=2.5)
+oil_plot
+dev.off()
+oil_plot
+
+
+## Friedman test for testing differences between groups for yeast peptide OILs (assumed paired/repeated measures non-normal data structure):
+res <- friedman.test(y=df_OIL$OIL[df_OIL$DE == "+"], groups = df_OIL$exp_names[df_OIL$DE == "+"], blocks=df_OIL$Peptide[df_OIL$DE == "+"])
+res
+df_OIL_wide <- df_OIL %>%  filter(DE=="+") %>% reshape(., idvar="Peptide", timevar="exp_names", direction="wide", v.names = "OIL")
+friedman.test(as.matrix(df_OIL_wide[,grep(names(df_OIL_wide), pattern="OIL")]))
+capture.output(res, file=paste0(output_dir, "/OIL_shared_quantified_peptides_FriedmanTest.txt"))
+writeLines(paste0("samplesize per group: ", nrow(df_OIL_wide))) ## give information on how many paired features were actually tested (i.e. sample size per group in the test):
+
+```
+
+
+
+
+```{r display ratio compression for group 9/6}
+
+## Create DE expression ground truth column in each search result based on organism info
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  df_i$DE <- ifelse(  grepl(df_i[,OrganismInfocolName[1]], pattern= OS_DE), yes="+", no="")  
+  print(table(df_i$DE))
+  listSearchRes[[i]] <- df_i
+}  
+  
+
+## Calculate ratio for each feature
+list_ratio <- vector(mode="list", length=N)
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  reporter_names <- grep(names(df_i), pattern=reporterIon_pattern, value=TRUE)
+  m_i <- df_i[,reporter_names]
+  m_i_group9 <- m_i[,groups %in% "Group9"]
+  m_i_group6 <- m_i[,groups %in% "Group6"]
+  ratio_i <- rowMeans(log2(m_i_group9 + 1)) -  rowMeans(log2(m_i_group6 + 1)) 
+  list_ratio[[i]] <- data.frame(ratio=ratio_i, exp_names = as.factor(exp_names[i]), DE=df_i$DE,Peptide= df_i[,modPep_column])
+}
+df_ratio <- do.call("rbind", list_ratio)
+df_ratio$exp_names <- factor(df_ratio$exp_names, levels=exp_names)
+
+
+## Plot result and save
+ratio_plot <- ggplot(df_ratio) +
+              geom_vline(xintercept=log2(1.5),col="red", linetype=2, size=0.4) +
+              geom_density(data = df_ratio,
+                           aes(x=ratio, col = exp_names, linetype = DE, size=DE, alpha=DE, fill=exp_names)) +
+              scale_fill_manual(values=samplecolors) +
+              scale_alpha_manual(values=c(0.3,0.3)) +
+              scale_color_manual(values=samplecolors) +
+              scale_linetype_manual(values=c(1,2)) +
+              scale_size_manual(values=c(0.6,0.6)) +
+              scale_x_continuous(breaks=c(-0.25,0,0.25,0.5,0.75),limits=c(-0.35,0.9)) +
+              theme_bw() 
+ratio_plot <- ratio_plot + theme(legend.key.size = unit(0.3, 'cm'))
+ratio_plot
+pdf(file = paste0(output_dir, "/ratio_group9_vs_group6_shared_quantified_peptides.pdf"), width = 3, height=1.5)
+ratio_plot
+dev.off()
+ratio_plot
+
+
+
+# ratio_plot_FCinf <- df_res %>% filter(theoretical_FC == 1000) %>% 
+#               ggplot(.) +
+#               geom_density(aes(x=observed_log2FC, col = type, linetype = organism, size=organism, alpha=organism, fill=type)) +
+#               scale_fill_manual(values=type_colors) +
+#               xlab("ratio") + 
+#               scale_alpha_manual(values=c(0.3,0.3)) +
+#               scale_color_manual(values=type_colors) +
+#               scale_linetype_manual(values=c(1,2)) +
+#               scale_size_manual(values=c(1,1)) +
+#               xlim(-0.35,7) +
+#               theme_bw()
+
+
+```
+
+
+```{r display mean reporter intensity}
+
+## Calculate mean intensity for shared yeast features
+listMeanI <- vector(mode="list", length=N)
+for (i in 1:N){ 
+  df_i <- listSearchRes[[i]]
+  reporter_names <- grep(names(df_i), pattern=reporterIon_pattern, value=TRUE)
+  m_i <- df_i[,reporter_names]
+  meanI <- rowMeans(m_i, na.rm=TRUE)
+  listMeanI[[i]] <- data.frame(meanI = meanI, exp_names=exp_names[i], DE=df_i$DE,Peptide= df_i[,modPep_column])
+}
+df_MeanI <- do.call("rbind", listMeanI)
+df_MeanI$exp_names <- factor(df_MeanI$exp_names, levels=exp_names)
+
+
+## check number of observations
+table(df_MeanI$Peptide) %>% table()
+
+## Plot mean reporter intensity and save
+meanI_plot <-  ggplot(df_MeanI) +
+               geom_line(aes(y=log2(meanI),x= exp_names, group=Peptide), cex=0.1, col="black", alpha=0.1) +
+               geom_boxplot(aes(y=log2(meanI),x=exp_names, col=exp_names),cex=1.25, alpha=0.7) +
+               scale_color_manual(values=samplecolors)+
+               ylab("log2 Mean reporter intensity")+
+               xlab(xlab) +
+               theme_classic() +
+               theme(legend.position = "none")
+pdf(file = paste0(output_dir, "/MeanI_shared_quantified_peptides.pdf"), width = 5, height=2.5)
+meanI_plot
+dev.off()
+meanI_plot
+
+## test for significant differeences
+res <- friedman.test(y=df_MeanI$meanI, groups = df_MeanI$exp_names, blocks=df_MeanI$Peptide)
+res
+capture.output(res, file=paste0(output_dir, "/SDwithinGroups_shared_quantified_peptides_FriedmanTest.txt"))
+
+
+
+```
+
+
+```{r calculate ROC curves for differential testing of FC 1.5 (9/6) on peptide-level for each experiment. Then plot Volcano Plots  ROC Curves in single plot}
+
+## Calculate ROC_statistics and other differential expression statistics for each search result
+listROC <- vector(mode="list", length=N)
+for (i in 1:N){
+  df_i <- listSearchRes[[i]]
+  DE <- df_i$DE
+  m_reporter_i <-  df_i[,grepl(names(df_i), pattern=reporterIon_pattern)]
+  group_2 <- m_reporter_i[,groups %in% "Group9"]
+  group_1 <- m_reporter_i[,groups %in% "Group6"]
+  listROC[[i]] <- ROC_function(matrix_group1 = log2(group_1),
+                               matrix_group2 = log2(group_2),
+                               true_hypothesis = !df_i$DE=="+")
+  
+}  
+
+
+## Plot volcano plots of theoretical FC 1.5 for all experiments.
+pdf(file = paste0(output_dir, "/Volcano_ThFC_1p33.pdf"), width = 4, height=10)
+par(mfrow=c(4,1))
+par(mfrow=c(4,1))
+for (i in 1:N){
+  ROC_i <-listROC[[i]]
+  FC_i <- ROC_i$FC
+  pval_i <- ROC_i$p_val
+  DE_i <- !ROC_i$true_hypothesis
+  
+  # calculate rgb values of samplecolor i
+  rgb_i <- col2rgb(col=samplecolors[i])
+  r_i <- rgb_i[1,]
+  g_i <- rgb_i[2,]
+  b_i <- rgb_i[3,]
+  
+  # plot volcano plot
+  par(mar=c(4,4,4,5))
+  par(mgp=c(2.5,0.8,0))
+  par(xpd=TRUE)
+  plot(x= FC_i,
+       y= -log10(pval_i),
+       pch=16, cex=0.6, xaxt="n", yaxt="n",
+       xlab= paste0("Fold change [log2]" ), ylab = "- log10 (p-value)",main=exp_names[i] ,
+       cex.lab=1.1, cex.main= 1.2, font.lab=2, col="grey", xlim=c(-0.75,0.75), bty="n", type="n")
+  axis(side=1, cex.axis=1, at=seq(-0.75,0.75,by=0.25))
+  axis(side=2, cex.axis=1, las=2, mgp=c(2.5, 0.8, 0), at=seq(0,15,by=5))
+  points(x=c(log2(1.3333), log2(1.3333)), y=c(0,max(-log10(pval_i))), col=samplecolors[i], type="l", lty="dashed")
+  points(x = FC_i[!DE_i],
+         y = -log10(pval_i)[!DE_i], pch=16, cex=1, xaxt="n", col=rgb(red=180,green=180,blue=180,alpha=75,maxColorValue = 255))
+  points(x = FC_i[DE_i],
+         y = -log10(pval_i)[DE_i], pch=16, cex=1, xaxt="n", col=rgb(red=r_i,green=g_i,blue=b_i,alpha=75,maxColorValue = 255))
+  
+  legend("topleft", legend=c("yeast", "human"), col=c(samplecolors[i], rgb(red=180,green=180,blue=180,alpha=255,maxColorValue = 255)), pch=16, bty="n", cex=1.1, inset=c(0.05,0))
+}
+dev.off()
+
+
+
+## Plot roc curves for each experiment
+pdf(file = paste0(output_dir, "/ROC.pdf"), width = 5, height=5)
+par(pty="s")
+par(mar=c(4,4,4,5))
+par(mgp=c(2.5,0.8,0))
+plot(1,1,xlim=c(0,1), ylim=c(0,1), cex.lab=1,  font.lab=2, type="n", ylab="True positive rate", xlab="False positive rate", xaxt="n", yaxt="n")
+axis(side=1, cex.axis=1, at=seq(0,1,by=0.2), cex.axis=0.9)
+axis(side=2, cex.axis=1, at=seq(0,1,by=0.2), cex.axis=0.9)
+abline(a=0,b=1, col="grey", lty="dashed")
+abline(v=0, col="grey")
+abline(v=1, col="grey")
+abline(h=0, col="grey")
+abline(h=1, col="grey")
+for (i in 1:N){
+  ROC_i <- listROC[[i]]
+  lines(x=ROC_i$ROC_coordinates[,2],
+       y=ROC_i$ROC_coordinates[,1],
+       lwd=3, col=samplecolors[i])
+}
+legend("bottomright", legend=exp_names, col=samplecolors, lty="solid", lwd=3, bty="n", inset=c(0.05,0.05), cex=0.8, title=xlab)  
+dev.off()
+
+```
+
+
+```{r plot sd within groups for each experiment}
+
+## Initiate output 
+list_var <- vector(mode="list", length=N)
+names(list_var) <- exp_names
+
+
+## Run loop
+for (i in 1:N){
+  
+  # extract experiment i
+  df_i <- listSearchRes[[i]]
+  m_reporter_i <-  df_i[,grepl(names(df_i), pattern=reporterIon_pattern)]
+  
+  # calculate mean intensity
+  df_i$meanIntensity <- rowMeans(m_reporter_i, na.rm=TRUE)
+  
+  # calculate sds for each group j within experiment i
+  names_groups <- c("Group0", "Group6", "Group9", "Group12")
+  list_groups <- vector(mode="list", length=4)
+  names(list_groups) <- names_groups
+  for (j in names_groups) {
+    group_ij <- log2(m_reporter_i[,groups %in% j])
+    sd_ij <- apply(group_ij, MARGIN = 1, FUN=sd)
+    list_groups[[j]] <- sd_ij
+  }
+  df_sd_i <- do.call(what=cbind, args=list_groups)
+  sd_i <- apply(df_sd_i, MARGIN = 1, FUN=median, na.rm=TRUE)
+  list_var[[i]] <- data.frame(sd=sd_i, feature=df_i$modpep, exp_names=exp_names[i],meanIntensity = df_i$meanIntensity)
+}
+df_sd <- do.call(what=rbind, args=list_var)
+df_sd$exp_names <- factor(df_sd$exp_names, 
+                          levels=exp_names)
+
+
+## Create plot and save
+ylim <- quantile(df_sd$sd, probs=0.8)
+sd_plot <-  ggplot(df_sd) +
+               geom_line(aes(y=sd,x= exp_names, group=feature), cex=0.1, col="black", alpha=0.1) +
+               geom_boxplot(aes(y=sd,x=exp_names, col=exp_names),cex=1.25, alpha=0.7) +
+               scale_color_manual(values=samplecolors)+
+               ylab("Median SD within groups")+
+               xlab(xlab) +
+               ylim(0,ylim)+ 
+               theme_classic() +
+               theme(legend.position = "none")
+pdf(file = paste0(output_dir, "/MedianSDwithinGroups_shared_quantified_peptides.pdf"), width = 5, height=2.5)
+sd_plot
+dev.off()
+
+
+## Calculate friedman test for differences in variances between groups. save it
+res <- friedman.test(y=df_sd$sd, groups = df_sd$exp_names, blocks=df_OIL$Peptide)
+res
+capture.output(res, file=paste0(output_dir, "/SDwithinGroups_shared_quantified_peptides_FriedmanTest.txt"))
+
+
+## Plot mean variance trend
+pdf(file = paste0(output_dir, "/MedianVarianceTrend_shared_quantified_peptides.pdf"), width = 5, height=4)
+meanvar_trend <- ggplot(df_sd) +
+                  geom_point(aes(x=log2(meanIntensity), y=sd), size=0.4, alpha=0.2) +
+                  ylim(0,0.4) +
+                  xlim(12,25) +
+                  ylab("SD")  +
+                  xlab("log2 Mean reporter intensity") +
+                  theme_classic() +
+                  geom_smooth(aes(x=log2(meanIntensity), y=sd), method="loess", col=samplecolors[2], se=FALSE, cex=1.5, span=0.05)
+meanvar_trend
+dev.off()
+
+```
+
+
+```{r}
+
+```
+
+
+
+

@@ -1,0 +1,1594 @@
+---
+title: "Site-to-protein normalization"
+author: "Moritz Madern"
+date: "2022-08-24"
+output: html_document
+---
+
+Data input:
+1) modified site table (output of "Aggregate_PSMs_to_Sites.Rmd" script)
+2) modified protein table (e.g output of "Process_proteinGroups.Rmd")
+3) functions contained in "functions_Site_To_Protein.R"
+
+Data output:
+1) modified site table (including site-to-protein normalization results)
+
+
+This script performs site-to-protein normalization while accounting for differences in estimated interference levels (EILs) in MS2-based isobaric labeling quantification. This ensures more accurate ratios and thus mitigates overcorrection and false-positives. Importantly, both of the site and protein intensities should have been normalized to uniform interference levels in their respective measurements. Potential renormalization of site intensities after adjusting to equal interference levels between site and protein level is optional, but can be beneficial if the initial normalization to uniform interference levels leaves systematic differences in site intensities (it was observed that  the saple-wise total PTM peptide abundance per sample does not always correlate well with the sample-wise non-PTM peptide abundance, which can produce a bias when they are normalized together). If batches are provided, resulting intensities and ratios can additionally be batch-corrected via the comBat() algorithm - this will create additional output columns.
+Note: This script currently supports MaxQuant output only!
+
+```{r Load required packages etc., message=FALSE, warning=FALSE, echo=FALSE}
+
+## Load required packages
+library(tidyverse)
+library(pals)
+library(MASS)
+library(reshape2)
+library(RColorBrewer)
+library(plotly)
+library(gplots)
+library(sva)
+library(limma)
+library(reshape2)
+library(cowplot)
+library(gridExtra)
+
+## Source functions from functions_SiteToProtein_norm.R
+source("functions_Site_To_Protein.R")
+
+## Create Results folder
+if (!file.exists("Results")){
+  dir.create("Results")
+}
+
+```
+
+
+```{r Specify required parameters}
+
+## 1) Parameters specific to site table
+
+## Specify file path to sites (e.g. acetyl-sites, phospho-sites) table. This table should have been filtered already, and contain impurity corrected & normalized intensities (so that interference is expected to affect all channels uniformly). Additionally, a column providing feature-wise EIL values (aggregated from PSMs) should be provided
+filepath_siteTable = "Results/aggregated_Acetyl (K)Sites.txt"
+
+## Specify reporter ion column pattern in sites table (per default: "__aggregated" from previous script!)
+reporter_pattern_siteTable = "__aggregated"
+
+## Specify sample groups in site table as a character vector
+groups_siteTable <- c("Group0", "Group6", "Group0", "Group6", "Group0", "Group6", "Group9", "Group12", "Group9", "Group12", "Group9", "Group12")
+
+## Specify sample names in input site table as a character vector.
+samplenames_siteTable <- c("Group0.1", "Group6.1", "Group0.2", "Group6.2", "Group0.3", "Group6.3", "Group9.1", "Group12.1", "Group9.2", "Group12.2", "Group9.3", "Group12.3")
+
+# Specify subselected and/or reordered sample names of site table (If no reordering and/or subselecting is needed, set as NULL). Use this to only (!) kick out empty channels (i.e. channels not used in experiment, but are nonetheless present as columns), and to reorder sample order if wanted (reflected in below plots and output)
+samplenames_siteTable_reordered <- c("Group0.1", "Group0.2", "Group0.3", 
+                                     "Group6.1","Group6.2", "Group6.3",
+                                     "Group9.1", "Group9.2", "Group9.3",
+                                     "Group12.1", "Group12.2", "Group12.3")
+
+## Specify column name of EIL in sites table
+eil_columnname_siteTable = "EIL"
+
+## Specify column name that references protein ID in sites table
+protein_id_columnname_siteTable = "Protein.group.IDs"
+
+## Specify batch of samples in siteTable as character vextor. Using this information, statistical testing accounts for batch effects; and batch-corrected intensities will be calculated (potentially relevant for visualization/clustering). If no batch present, set to NULL
+batch_siteTable = NULL
+
+## Specify colors of each group as named vector (entries correspond to colors, names correspond to group names). If specified NULL, will be given colors from RcolorBrewer palette
+colors_groups <- NULL
+
+## Optional: Specify if site intensities should be renormalized after interference-adjustment, prior to site-to-protein normalization. If not wanted, set to FALSE
+renormalize_sites = FALSE
+
+## Optional: Specify which renormalization strategy should be used (Accepted input: "loess" or "DESeq"). Only relevant if renormalize_sites = TRUE
+renorm_strategy = "loess"
+
+## Specify sample names as character vector that are non-empty (i.e. labeled) but should be kicked out (e.g. reference channels, outliers, etc.) for the subsequent analysis. Importantly, the specified samples are kicked only after the interference adjustment step)
+samplenames_kick = c("Group0.1", "Group0.2", "Group0.3")
+
+## Optional: specify output name of resulting data (omit file ending!). If NULL, result will be saved with prefix "protein_normalized_" and further named based on input site table
+output_name = "SiteMS2ToProteinMS3"
+
+
+
+
+
+
+## 2) Parameters specific to protein table 
+
+## Specify file path to protein table. This protein table should already contain impurity-corrected & normalized intensities (so that interference is expected to affect all channels uniformly). Additionally, a column providing protein-wise EIL values (aggregated from PSMs) should be provided
+filepath_proteinTable = "proteinGroups_MS3.txt"
+
+## Specify reporter ion column pattern in proteins table ("log2 " must not be part of the pattern!)
+reporter_pattern_proteinTable = "Reporter[.]intensity"
+
+## Specify sample groups in protein table as a character vector
+groups_proteinTable = c("Group0", "Group6", "Group0", "Group6", "Group0", "Group6", "Group9", "Group12", "Group9", "Group12", "Group9", "Group12")
+
+## Specify sample names in protein table as a character vector
+samplenames_proteinTable = c("Group0.1", "Group6.1", "Group0.2", "Group6.2", "Group0.3", "Group6.3", "Group9.1", "Group12.1", "Group9.2", "Group12.2", "Group9.3", "Group12.3")
+
+## Specify column name of EIL in proteins table. If specified as NULL, it is assumed that EIL is 0 (e.g. for MS3 measurement)
+eil_columnname_proteinTable = NULL
+
+## Specify column name  of protein ID column in protein table
+id_columnname_proteinTable = "id"
+
+## Specify if intensities are log2 transformed in proteins table. If TRUE, they will need to be retransformed by exponation
+bool_are_intensities_log2_transformed_in_proteinTable = TRUE
+
+```
+
+
+```{r Check some parameters}
+
+## specify color vector as named vector
+if (is.null(colors_groups)){
+  unique_groups <- unique(groups_siteTable)
+  colors <- RColorBrewer::brewer.pal(n=length(unique_groups), name="Set1")
+  colors_groups = set_names(x=colors, nm=unique_groups)
+}
+
+## make sure batch is a character vector
+if (!is.null(batch_siteTable)){
+  batch_siteTable <- as.character(batch_siteTable)
+}
+
+```
+
+
+```{r Read in site table, message=FALSE, warning=FALSE, echo=FALSE}
+
+## Read in sites table
+df_sites <- read.delim(filepath_siteTable, header=TRUE, sep="\t")
+
+
+## Rename EIL column of sites table to "EIL"
+names(df_sites)[names(df_sites) == eil_columnname_siteTable] <- "EIL"
+
+
+## Extract and give summary of protein table reporter intensity matrix. Replace 0 with NAs
+m_sites <- df_sites[, grepl(names(df_sites), pattern=reporter_pattern_siteTable)]
+m_sites[m_sites == 0] <- NA
+df_sites_meta <- df_sites[, ! grepl(names(df_sites), pattern=reporter_pattern_siteTable)]
+df_sites <- cbind(df_sites_meta, m_sites)
+
+
+## if reordering/subselecting is specified via parameter samplenames_siteTable_reordered, perform reordering/subselecting. Afterwards, adjust groups and samplenames parameters accordingly
+if (!is.null(samplenames_siteTable_reordered)){
+  stopifnot(all(samplenames_siteTable_reordered %in% samplenames_siteTable))
+  df_sites_meta <- df_sites[, !grepl(names(df_sites), pattern=reporter_pattern_siteTable)]
+  ind_reorder <- match(samplenames_siteTable_reordered, samplenames_siteTable)
+  m_sites <- df_sites[, grepl(names(df_sites), pattern=reporter_pattern_siteTable)]
+  m_sites <- m_sites[,ind_reorder]
+  samplenames_siteTable <- samplenames_siteTable[ind_reorder]
+  groups_siteTable <- groups_siteTable[ind_reorder]
+  try (batch_siteTable <- batch_siteTable[ind_reorder])
+  df_sites <- cbind(df_sites_meta, m_sites)
+}
+
+## Check Heatmap (log2 intensitiescentered at 0). Save plot
+m_sites <- df_sites[, grepl(names(df_sites), pattern=reporter_pattern_siteTable)]
+heatmap_plot(m=t(scale(t(log2(m_sites + 1)), scale=FALSE)), 
+         groups = groups_siteTable, 
+         legend_colors = colors_groups,
+         title="Heatmap sites",
+         type="standardized",
+         samplenames = samplenames_siteTable, 
+         plot_path = "Results/Heatmap_sites_noBatchCorr.pdf")
+
+## Check PCA. Save plot
+m_sites <- df_sites[, grepl(names(df_sites), pattern=reporter_pattern_siteTable)]
+PCA_plot(m=log2(m_sites + 1), 
+         groups = groups_siteTable, 
+         legend_colors = colors_groups,
+         batch=NULL,
+         samplenames = samplenames_siteTable,
+         title="PCA sites",
+         plot_path="Results/PCA_sites_noBatchCorr.pdf")
+
+
+## Check normalization status (since intensities were normalized in concert with all PSMs - not only PTM peptides - measured in the respective runs, this can look bad. After interferece adjustment, the intensities can be renormalized! See parameter "renormalization_sites")
+boxplot(log2(m_sites + 1), names=samplenames_siteTable, las=2, cex.names=0.7, ylab="log2 intensity", border=colors_groups[groups_siteTable], lwd=2, xaxt="n", main="Boxplots sites")
+axis(side=1, at= 1:length(samplenames_siteTable),las=2, labels=samplenames_siteTable, cex.axis = 0.75)
+
+```
+
+
+```{r Read in protein table, message=FALSE, warning=FALSE, echo=FALSE}
+
+## Read in sites table
+df_proteins <- read.delim(filepath_proteinTable, header=TRUE, sep="\t")
+
+
+## Rename EIL column of protein table to "EIL". If specified as NULL, create 0-vector EIL column
+if (!is.null(eil_columnname_proteinTable)){
+  names(df_proteins)[names(df_proteins) == eil_columnname_proteinTable] <- "EIL"
+} else { 
+  df_proteins$EIL <- numeric(nrow(df_proteins))
+}
+
+
+## Extract and give summary of protein table reporter intensity matrix
+m_proteins <- df_proteins[, grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+m_proteins[m_proteins==0] <- NA
+
+
+## If sample arrangement or composition in proteins table does not match site table, adjust accordingly in the protein table
+if (length(samplenames_siteTable) != length(samplenames_proteinTable) || any(samplenames_proteinTable != samplenames_siteTable)){
+  
+  # catch error
+  stopifnot(all(samplenames_siteTable %in% samplenames_proteinTable))
+  
+  # extract quantitative and meta protein table data separately
+  m_proteins <- df_proteins[, grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+  df_proteins_meta <- df_proteins[, !grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+  
+  # subselect for only those samples that are present in the site table
+  bool_subselect <- samplenames_proteinTable %in% samplenames_siteTable
+  m_proteins <- m_proteins[,bool_subselect]
+  samplenames_proteinTable <- samplenames_proteinTable[bool_subselect]
+  
+  # reorder sample columns according to site table
+  m_proteins <- m_proteins[,match(samplenames_siteTable, samplenames_proteinTable)]
+  
+  # merge again
+  df_proteins <- cbind(df_proteins_meta, m_proteins)
+}
+
+
+## define single groups, samplenames and batch vector (now that site and protein table intensity column order match)
+groups <- groups_siteTable
+samplenames <- samplenames_siteTable
+batch <- batch_siteTable
+
+
+## If so specified, retransform log2 transformed reporter ion intensities (they need to be untransformed!)
+if (bool_are_intensities_log2_transformed_in_proteinTable){
+  df_proteins_meta <- df_proteins[,!grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+  m_proteins <- df_proteins[,grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+  m_proteins <- 2^as.matrix(m_proteins)
+  colnames(m_proteins) <- sub(colnames(m_proteins), pattern = "log2_", replacement = "")
+  df_proteins <- cbind(df_proteins_meta, m_proteins)
+}
+
+
+## Check Heatmap (log2-intensities centered at 0). Save plot 
+m_proteins <- df_proteins[,grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+heatmap_plot(m=t(scale(t(log2(m_proteins + 1)), scale=FALSE)), 
+         groups = groups_siteTable, 
+         legend_colors = colors_groups,
+         title="Heatmap proteins",
+         type="standardized",
+         samplenames = samplenames_siteTable,
+         plot_path = "Results/Heatmap_proteins_noBatchCorr.pdf")
+
+
+## Check PCA. Save plot
+m_proteins <- df_proteins[,grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+PCA_plot(m=log2(m_proteins + 1), 
+         groups = groups, 
+         legend_colors = colors_groups,
+         batch=NULL,
+         samplenames = samplenames, title = "PCA proteins",
+         plot_path ="Results/PCA_proteins_noBatchCorr.pdf")
+
+
+## Check normalization status
+boxplot(log2(m_proteins + 1), names=samplenames_siteTable, las=2, cex.names=0.7, ylab="log2 intensity", border=colors_groups[groups_siteTable], lwd=2, xaxt="n", main="Boxplots proteins")
+axis(side=1, at= 1:length(samplenames),las=2, labels=samplenames, cex.axis = 0.75)
+
+```
+
+
+```{r Check if column names match between site and protein table after subselecting + matching + reordering }
+
+## Extract both reporter intensity tables anew
+m_sites <- df_sites[, grepl(names(df_sites), pattern=reporter_pattern_siteTable)]
+m_proteins <- df_proteins[, grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+
+## Check if the printed column names match (and are of equal length)
+print(data.frame(samplenames_siteTable = samplenames, 
+                 columnNames_siteTable = colnames(m_sites), 
+                 columnNames_proteinTable= colnames(m_proteins)))
+
+## change site reporter ion intensity columns to uniform samplenames in both site and protein table
+df_sites_meta <- df_sites[, !grepl(names(df_sites), pattern=reporter_pattern_siteTable)]
+names(m_sites) <- samplenames
+df_sites <- cbind(df_sites_meta, m_sites)
+df_proteins_meta <- df_proteins[, !grepl(names(df_proteins), pattern = reporter_pattern_proteinTable)]
+names(m_proteins) <- samplenames
+df_proteins <- cbind(df_proteins_meta, m_proteins)
+
+```
+
+
+```{r Filter for only sites with underlying (unmodified) protein quantified}
+
+## Filter out sites which have no protein to normalize for in the proteins table (specified as different experiment in MaxQuant)
+bool_keep <- df_sites[,protein_id_columnname_siteTable] %in% df_proteins[,id_columnname_proteinTable]
+df_sites_filtered <- df_sites[bool_keep,]
+
+
+## Report filtering
+writeLines(paste0("Number of sites before filtering sites table: ", nrow(df_sites)))
+writeLines(paste0("Number of sites after filtering sites table: ", nrow(df_sites_filtered)))
+
+
+## Filter out proteins that are not contained in the site table
+bool_keep <- df_proteins[,id_columnname_proteinTable] %in% df_sites_filtered[,protein_id_columnname_siteTable]
+df_proteins_filtered <- df_proteins[bool_keep,]
+
+
+## Report filtering
+cat("\n")
+writeLines(paste0("Number of proteins before filtering proteins table: ", nrow(df_proteins)))
+writeLines(paste0("Number of proteins after filtering proteins table: ", nrow(df_proteins_filtered)))
+
+```
+
+
+```{r Give each site a unique identifier}
+
+## Generate dictionary vector that contains relevant gene name information
+dict_gene_name <- setNames(object = df_proteins$Gene.names, nm=as.character(df_proteins[,id_columnname_proteinTable]))
+
+## Extract gene names for sites via  protein id column in sites table (why? to get rid of empty "" entries. MQ does that. Make sure that in the protein table, "" in the "Gene names" column were already replaced!)
+gene_name_sites <- dict_gene_name[as.character(df_sites_filtered[,protein_id_columnname_siteTable])]
+
+## Create unique identifier combining gene name, protein and sequence info (from site probabilities clumn), and position within peptide 
+df_sites_filtered$unique_site_identifier <- paste0(gene_name_sites, "__", df_sites_filtered$Protein, "__", df_sites_filtered[,grepl(names(df_sites_filtered), pattern="Probabilities")], "__mod",df_sites_filtered$number_modifications,"__position", df_sites_filtered$Position)
+
+```
+
+
+```{r Adjust interference levels }
+
+## Create some helper variables (i.e. the id column names linking the site and protein table, reporter ion names, and number of rows/columns of the reporter ion table)
+protein_id_column_siteTable <- df_sites_filtered[,protein_id_columnname_siteTable]
+id_column_proteinTable <- df_proteins_filtered[,id_columnname_proteinTable]
+n <- nrow(df_sites_filtered)
+k <- length(samplenames)
+
+
+## Initiate protein intensity matrix of the site's underlying protein
+m_underlying_proteins <- matrix(numeric(1), nrow=n, ncol=k) 
+colnames(m_underlying_proteins) <- paste0(samplenames, "__underlyingProtein")
+
+
+## Initiate protein intensity matrix of the site's underlying protein after IF adjustment
+m_underlying_proteins_IFadjust <- matrix(numeric(1), nrow=n, ncol=k) 
+colnames(m_underlying_proteins_IFadjust) <- paste0(samplenames, "__underlyingProtein_IFadjust")
+
+
+## Initiate site intensity matrix after IF adjustment (relevant if proteome was not measured via MS3)
+m_sites_IFadjust <- matrix(numeric(1), nrow=n, ncol=k) 
+colnames(m_sites_IFadjust) <- paste0(samplenames, "__IFadjust")
+
+
+## Do site to protein normalization for each site
+for (i in 1:n){
+  
+  
+  ## A: Extract relevant information ##
+  # extract reporter intensities of site i, replace 0 with NA
+  v_reporter_site_i <- df_sites_filtered[i, samplenames] %>% as.vector(., mode="numeric")
+  v_reporter_site_i[v_reporter_site_i < 1] <- NA
+  
+  # extract EIL value of site i
+  eil_site_i <- df_sites_filtered[i, "EIL"]
+  
+  # extract protein ID of site i
+  proteinID_i <- protein_id_column_siteTable[i]
+  
+  # extract reporter intensities of protein i, replace 0 with NA
+  v_reporter_protein_i <- df_proteins_filtered[id_column_proteinTable == proteinID_i, samplenames]  %>% as.vector(., mode="numeric")
+  v_reporter_protein_i[v_reporter_protein_i < 1] <- NA
+  
+  # extract EIL value of protein i
+  eil_protein_i <- df_proteins_filtered[id_column_proteinTable==proteinID_i, "EIL"]
+  
+  ## B: Equalize interference levels between sites and protein (to the respective higher EIL value) ##
+  # if EIL is larger at site level, add artificial interference to protein intensity to equalize
+  if (eil_site_i >= eil_protein_i){
+    
+    # calculate average reporter intensity of protein intensities
+    avg_protein <- mean(v_reporter_protein_i, na.rm = TRUE)
+    
+    # calculate average reporter intensity of protein intensities when interference-corrected by subtraction
+    avg_protein_0_interference <- avg_protein - avg_protein*eil_protein_i
+   
+    # calculate the average of protein intensities in case of equal interference level
+    avg_protein_equal_interference <- avg_protein_0_interference + avg_protein_0_interference*eil_site_i/(1 - eil_site_i)
+    
+    # calculate delta interference that needs to be added to original protein intensities
+    delta_interference <- avg_protein_equal_interference - avg_protein
+    
+    # add interference to calculate final protein reporter intensities with equal level of interference
+    v_IFadjust_reporter_protein_i <- v_reporter_protein_i + delta_interference
+    v_IFadjust_reporter_site_i <- v_reporter_site_i
+    
+  }
+  # if EIL is larger at protein level, add artificial interference to site reporter intensities to equalize 
+  if (eil_protein_i > eil_site_i){
+    
+    # calculate average reporter intensity of site intensities
+    avg_site <- mean(v_reporter_site_i, na.rm = TRUE)
+    
+    # calculate average reporter intensity of site when interference-corrected (by subtraction)
+    avg_site_0_interference <- avg_site - avg_site*eil_site_i
+    
+    # calculate the average of site intensities in case of equal interference level
+    avg_site_equal_interference <- avg_site_0_interference + avg_site_0_interference*eil_protein_i/(1 - eil_protein_i)
+    
+    # calculate delta interference that needs to be added to original site intensities
+    delta_interference <- avg_site_equal_interference - avg_site
+    
+    # add interference to calculate final site reporter intensities with equal level of interference
+    v_IFadjust_reporter_site_i <- v_reporter_site_i + delta_interference
+    v_IFadjust_reporter_protein_i <- v_reporter_protein_i
+  }
+  
+  ## C: Save results
+  m_sites_IFadjust[i,] <- v_IFadjust_reporter_site_i
+  m_underlying_proteins[i,] <- v_reporter_protein_i
+  m_underlying_proteins_IFadjust[i,] <- v_IFadjust_reporter_protein_i
+}
+
+
+## Store results of interference-adjustment in dataframe
+df_sites_filtered <- cbind(df_sites_filtered, m_sites_IFadjust, m_underlying_proteins, m_underlying_proteins_IFadjust)
+
+```
+
+
+```{r OPTIONAL: Renormalize site and IF-adjusted site intensities, warning=FALSE, fig.width=4, fig.height=1.5}
+
+## Check if renormalization is wanted
+if (renormalize_sites){
+  
+  # extract site intensities (non-adjusted)
+  m_sites <- df_sites_filtered[,paste0(samplenames)] %>% as.matrix()
+  m_sites[m_sites == 0] <- NA
+  
+  # extract IF-adjusted site intensities
+  m_sites_IFadjust <- df_sites_filtered[,paste0(samplenames, "__IFadjust")] %>% as.matrix()
+  m_sites_IFadjust[m_sites_IFadjust==0] <- NA
+  
+  # if norm strategy is "loess", renormalize using cyclic loess normalization
+  if (renorm_strategy == "loess") {
+    m_sites_renorm <- loess_norm(m_sites)
+    m_sites_IFadjust_renorm <- loess_norm(m_sites_IFadjust)
+  }
+  
+  # if norm strategy is "DESeq", renormalize using DESeq2's estimate size factor normalization
+  if (renorm_strategy == "DESeq") {
+    m_sites_renorm <- DESeq_norm(m_sites)
+    m_sites_IFadjust_renorm <- DESeq_norm(m_sites_IFadjust)
+  }
+  
+  ## document renorm strategy
+  writeLines("Chosen renormalization strategy:")
+  print(renorm_strategy)
+  
+  
+  # plot results of sites before and after renormalization
+  par(mfrow=c(1,2))
+  boxplot(log2(m_sites + 1), names=samplenames, las=2, cex.names=0.2, ylab="log2 intensity", border=colors_groups[groups], lwd=2, main="sites before renormalization", xaxt="n", cex.main=0.9)
+  axis(side=1, at= 1:length(samplenames),las=2, labels=samplenames, cex.axis = 0.6)
+  boxplot(log2(m_sites_renorm + 1), names=samplenames, las=2, cex.names=0.5, ylab="log2 intensity", border=colors_groups[groups], lwd=2, main="sites after renormalization", xaxt="n", cex.main=0.9)
+  axis(side=1, at= 1:length(samplenames),las=2, labels=samplenames, cex.axis = 0.6)
+
+
+  
+  # plot results of IF-adjusted sites before and after renormalization
+  par(mfrow=c(1,2))
+  boxplot(log2(m_sites_IFadjust + 1), names=samplenames, las=2, cex.names=0.2, ylab="log2 intensity", border=colors_groups[groups], lwd=2, main="IF-adjusted sites before renormalization", xaxt="n", cex.main=0.9)
+  axis(side=1, at= 1:length(samplenames),las=2, labels=samplenames, cex.axis = 0.6)
+  boxplot(log2(m_sites_IFadjust_renorm + 1), names=samplenames, las=2, cex.names=0.5, ylab="log2 intensity", border=colors_groups[groups], lwd=2, main="IF-adjusted sites after renormalization",xaxt="n", cex.main=0.9)
+  axis(side=1, at= 1:length(samplenames),las=2, labels=samplenames, cex.axis = 0.6)
+  
+  
+  # replace old intensites with new ones
+  df_sites_filtered[,paste0(samplenames)] <- m_sites_renorm
+  df_sites_filtered[,paste0(samplenames, "__IFadjust")] <- m_sites_IFadjust_renorm
+}
+
+```
+
+
+```{r Normalize site level to protein level by division}
+
+## Initiate site-to-protein normalized intensity matrix before interference adjustment
+m_siteToProtein <- matrix(numeric(1), nrow=n, ncol=k) 
+colnames(m_siteToProtein) <- paste0(samplenames, "__siteToProtein")
+
+
+## Initiate site-to-protein normalized intensity matrix after interference adjustment
+m_siteToProtein_IFadjust <- matrix(numeric(1), nrow=n, ncol=k) 
+colnames(m_siteToProtein_IFadjust) <- paste0(samplenames, "__siteToProtein_IFadjust")
+
+
+
+## Do site to protein normalization for each site
+for (i in 1:n){
+  
+  # extract reporter intensities of site i, replace 0 with NA
+  v_reporter_site_i <- df_sites_filtered[i, paste0(samplenames)] %>% as.vector(., mode="numeric")
+  v_reporter_site_i[v_reporter_site_i < 1] <- NA
+  
+  # extract interference-adjusted intensities of site i, replace 0 with NA
+  v_IFadjust_reporter_site_i <- df_sites_filtered[i, paste0(samplenames, "__IFadjust")] %>% as.vector(., mode="numeric")
+  v_IFadjust_reporter_site_i[v_IFadjust_reporter_site_i < 1] <- NA
+  
+  # extract reporter intensities of protein i, replace 0 with NA
+  v_reporter_protein_i <- df_sites_filtered[i, paste0(samplenames, "__underlyingProtein")] %>% as.vector(., mode="numeric")
+  v_reporter_protein_i[v_reporter_protein_i < 1] <- NA
+  
+  # extract reporter intensities of protein i, replace 0 with NA
+  v_IFadjust_reporter_protein_i <- df_sites_filtered[i, paste0(samplenames, "__underlyingProtein_IFadjust")] %>% as.vector(., mode="numeric")
+  v_IFadjust_reporter_protein_i[v_IFadjust_reporter_protein_i < 1] <- NA
+  
+  
+  ## B: Calculate ratios, then divide by median ratio (to scale to a median of 1)
+  # build ratios before and after interference adjustment (then divide by median ratio to scale to a median of 1)
+  ratio_i <- v_reporter_site_i/v_reporter_protein_i 
+  ratio_i <- ratio_i/median(ratio_i, na.rm = TRUE)
+  ratio_IFadjust_i <- v_IFadjust_reporter_site_i/v_IFadjust_reporter_protein_i 
+  ratio_IFadjust_i <- ratio_IFadjust_i/median(ratio_IFadjust_i, na.rm=TRUE)
+  
+  # save results
+  m_siteToProtein[i,] <- ratio_i
+  m_siteToProtein_IFadjust[i,] <- ratio_IFadjust_i
+}
+
+## Store results of interference adjustment in dataframe
+df_sites_filtered <- cbind(df_sites_filtered, m_siteToProtein, m_siteToProtein_IFadjust)
+
+```
+
+
+```{r Kick out reference channel samples, or other samples that are not relevant for the analysis (e.g. missing group or batch label) as specified via parameter samplenames_kick}
+
+## Samplenames before removal
+writeLines("Samplenames before removal:")
+print(samplenames)
+
+## Generate pattern of samplenames to be kicked. if parameter samplenames_kick has more than one element, concatenate with "|"
+pattern_kick <- paste0(samplenames_kick, collapse = "|")
+
+
+## kick columns in df_sites_filtered that correspond to this sample
+bool_columns_keep <- !grepl(names(df_sites_filtered), pattern=pattern_kick)
+df_sites_filtered <- df_sites_filtered[, bool_columns_keep]
+
+
+## adjust parameters samplenames, groups, batch
+bool_keep <- !samplenames %in% samplenames_kick
+samplenames <- samplenames[bool_keep]
+groups <- groups[bool_keep]
+batch <- batch[bool_keep]
+
+
+## report after removal
+writeLines("\nSamplenames after removal:")
+print(samplenames)
+
+```
+
+
+```{r OPTIONAL: Calculate batch-corrected site intensities via comBat, fig.width=3, fig.height=2}
+
+## Check if batch was specified (i.e. not NULL)
+if (!is.null(batch)){
+  
+  # Extract site reporter intensity table. Replace 0 with NAs. Log2-transform. Plot PCA and Heatmap before batch correction
+  m_sites <- df_sites_filtered[, samplenames] %>% as.matrix(.)
+  m_sites[m_sites<1] <- NA
+  m_sites <- log2(m_sites)
+  
+  # Find rows that don't contain NAs. Batch-correct them. Then replace batch-corrected with original rows
+  writeLines(paste0("Percentage of NA-containing rows: ", round(mean(rowSums(is.na(m_sites)) > 0)*100, digits=1)))
+  writeLines("Note: NA-containing features/rows could not be batch-corrected")
+  rowind_sites_nonNA <- which(rowSums(is.na(m_sites)) == 0)
+  m_sites_nonNA <- m_sites[rowind_sites_nonNA,]
+  mod <- model.matrix(~groups)
+  m_sites_nonNA_corr <- ComBat(dat=m_sites_nonNA, batch=batch, mod=mod)
+  m_sites[rowind_sites_nonNA,] <- m_sites_nonNA_corr
+  
+  # Retransform and save batch-corrected intensities
+  m_sites_corr <- 2^m_sites
+  colnames(m_sites_corr) <- paste0(colnames(m_sites_corr), "__batchCorr")
+  df_sites_filtered <- cbind(df_sites_filtered, m_sites_corr)
+  
+  # Plot PCA before and after batch correction (concerns only non-NA rows)
+  print(PCA_plot(m=m_sites_nonNA, 
+                 groups=groups,
+                 samplenames=samplenames, 
+                 batch=batch, 
+                 legend_colors = colors_groups,
+                 title = "sites before batch correction"))
+  print(PCA_plot(m=m_sites_nonNA_corr, 
+                 groups=groups,
+                 samplenames=samplenames, 
+                 batch=batch, 
+                 legend_colors = colors_groups,
+                 title = "sites after batch correction"))
+  
+  # PLot centered Heatmap beforeand after batch correction (concerns only non-NA rows)
+  heatmap_plot(t(scale(t(m_sites_nonNA), scale=FALSE)),
+               groups=groups,
+               samplenames=samplenames,
+               legend_colors = colors_groups,
+               title="sites (centered) \n before batch correction",
+               type="centered")
+  heatmap_plot(t(scale(t(m_sites_nonNA_corr), scale=FALSE)),
+               groups=groups,
+               samplenames=samplenames,
+               legend_colors = colors_groups,
+               title="sites (centered) \n after batch correction",
+               type="centered")
+}
+
+```
+
+
+```{r OPTIONAL: Calculate batch-corrected protein intensities via comBat, warning=FALSE, fig.width=3, fig.height=2}
+
+## Check if batch was specified (i.e. not NULL)
+if (!is.null(batch)){
+  
+  # Extract site reporter intensity table. Replace 0 with NAs. Log2-transform. Plot PCA and Heatmap before batch correction
+  m_proteins <- df_sites_filtered[, paste0(samplenames, "__underlyingProtein")] %>% as.matrix(.)
+  m_proteins[m_proteins<1] <- NA
+  m_proteins <- log2(m_proteins)
+  
+  # Find rows that don't contain NAs. Batch-correct them. Then replace batch-corrected with original rows
+  writeLines(paste0("Percentage of NA-containing rows: ", round(mean(rowSums(is.na(m_proteins)) > 0)*100, digits=1)))
+  writeLines("Note: NA-containing features/rows could not be batch-corrected")
+  rowind_proteins_nonNA <- which(rowSums(is.na(m_proteins)) == 0)
+  m_proteins_nonNA <- m_proteins[rowind_proteins_nonNA,]
+  mod <- model.matrix(~groups)
+  m_proteins_nonNA_corr <- ComBat(dat=m_proteins_nonNA, batch=batch, mod=mod)
+  m_proteins[rowind_proteins_nonNA,] <- m_proteins_nonNA_corr
+  
+  # Retransform and save batch-corrected intensities
+  m_proteins_corr <- 2^m_proteins
+  colnames(m_proteins_corr) <- paste0(colnames(m_proteins_corr), "__batchCorr")
+  df_sites_filtered <- cbind(df_sites_filtered, m_proteins_corr)
+  
+  # Plot PCA before and after batch correction (concerns only non-NA rows)
+  print(PCA_plot(m=m_proteins_nonNA, 
+                 groups=groups,
+                 samplenames=samplenames, 
+                 batch=batch, 
+                 legend_colors = colors_groups,
+                 title = "underlying proteins before batch correction"))
+  print(PCA_plot(m=m_proteins_nonNA_corr, 
+                 groups=groups,
+                 samplenames=samplenames, 
+                 batch=batch, 
+                 legend_colors = colors_groups,
+                 title = "underlying proteins after batch correction"))
+  
+  # PLot centered Heatmap beforeand after batch correction (concerns only non-NA rows)
+  heatmap_plot(t(scale(t(m_proteins_nonNA), scale=FALSE)),
+               groups=groups,
+               samplenames=samplenames,
+               legend_colors = colors_groups,
+               title="underlying proteins (centered) \n before batch correction",
+               type="centered")
+  heatmap_plot(t(scale(t(m_proteins_nonNA_corr), scale=FALSE)),
+               groups=groups,
+               samplenames=samplenames,
+               legend_colors = colors_groups,
+               title="underlying proteins (centered) \n after batch correction",
+               type="centered")
+}
+
+```
+
+
+```{r OPTIONAL: Calculate batch-corrected site/protein ratios via comBat, warning=FALSE, fig.width=3, fig.height=2}
+
+## Check if batch was specified (i.e. not NULL)
+if (!is.null(batch)){
+  
+  # Extract site/protein ratios. log2 transform. 
+  m_ratio <- df_sites_filtered[, paste0(samplenames, "__siteToProtein")] %>% as.matrix(.) %>% log2()
+  
+  # Find rows that don't contain NAs. Batch-correct them. Then replace batch-corrected with original rows
+  writeLines(paste0("Percentage of NA-containing rows: ", round(mean(rowSums(is.na(m_ratio)) > 0)*100, digits=1)))
+  writeLines("Note: NA-containing features/rows could not be batch-corrected")
+  rowind_ratio_nonNA <- which(rowSums(is.na(m_ratio)) == 0)
+  m_ratio_nonNA <- m_ratio[rowind_ratio_nonNA,]
+  mod <- model.matrix(~groups)
+  m_ratio_nonNA_corr <- ComBat(dat=m_ratio_nonNA, batch=batch, mod=mod)
+  m_ratio[rowind_ratio_nonNA,] <- m_ratio_nonNA_corr
+  
+  # Retransform and save batch-corrected intensities
+  m_ratio_corr <- 2^m_ratio
+  colnames(m_ratio_corr) <- paste0(colnames(m_ratio_corr), "__batchCorr")
+  df_sites_filtered <- cbind(df_sites_filtered, m_ratio_corr)
+  
+  # Plot PCA before and after batch correction (concerns only non-NA rows)
+  print(PCA_plot(m=m_ratio_nonNA, 
+                 groups=groups,
+                 samplenames=samplenames, 
+                 batch=batch, 
+                 legend_colors = colors_groups,
+                 title = "log2 site/protein ratio before batch correction"))
+  print(PCA_plot(m=m_ratio_nonNA_corr, 
+                 groups=groups,
+                 samplenames=samplenames, 
+                 batch=batch, 
+                 legend_colors = colors_groups,
+                 title = "log2 site/protein ratio after batch correction"))
+  
+  # PLot centered Heatmap beforeand after batch correction (concerns only non-NA rows)
+  heatmap_plot(m_ratio_nonNA,
+               groups=groups,
+               samplenames=samplenames,
+               legend_colors = colors_groups,
+               title="log2 site/protein ratio \n before batch correction",
+               type="centered")
+  heatmap_plot(m_ratio_nonNA_corr,
+               groups=groups,
+               samplenames=samplenames,
+               legend_colors = colors_groups,
+               title="log2 site/protein ratio \n after batch correction",
+               type="centered")
+}
+
+```
+
+
+```{r OPTIONAL: Calcuate batch-corrected IF-adjusted site/protein ratios via comBat, warning=FALSE, fig.width=3, fig.height=2}
+
+## Check if batch was specified (i.e. not NULL)
+if (!is.null(batch)){
+  
+  # Extract site/protein ratios. log2 transform. 
+  m_ratio <- df_sites_filtered[, paste0(samplenames, "__siteToProtein_IFadjust")] %>% as.matrix(.) %>% log2()
+
+  # Find rows that don't contain NAs. Batch-correct them. Then replace batch-corrected with original rows
+  writeLines(paste0("Percentage of NA-containing rows: ", round(mean(rowSums(is.na(m_ratio)) > 0)*100, digits=1)))
+  writeLines("Note: NA-containing features/rows could not be batch-corrected")
+  rowind_ratio_nonNA <- which(rowSums(is.na(m_ratio)) == 0)
+  m_ratio_nonNA <- m_ratio[rowind_ratio_nonNA,]
+  mod <- model.matrix(~groups)
+  m_ratio_nonNA_corr <- ComBat(dat=m_ratio_nonNA, batch=batch, mod=mod)
+  m_ratio[rowind_ratio_nonNA,] <- m_ratio_nonNA_corr
+  
+  # Retransform and save batch-corrected intensities
+  m_ratio_corr <- 2^m_ratio
+  colnames(m_ratio_corr) <- paste0(colnames(m_ratio_corr), "__batchCorr")
+  df_sites_filtered <- cbind(df_sites_filtered, m_ratio_corr)
+  
+  # Plot PCA before and after batch correction (concerns only non-NA rows)
+  print(PCA_plot(m=m_ratio_nonNA, 
+                 groups=groups,
+                 samplenames=samplenames, 
+                 batch=batch, 
+                 legend_colors = colors_groups,
+                 title = "IF-adjusted log2 site/protein ratio before batch correction"))
+  print(PCA_plot(m=m_ratio_nonNA_corr, 
+                 groups=groups,
+                 samplenames=samplenames, 
+                 batch=batch, 
+                 legend_colors = colors_groups,
+                 title = "IF-adjusted log2 site/protein ratio after batch correction"))
+  
+  # PLot centered Heatmap beforeand after batch correction (concerns only non-NA rows)
+  heatmap_plot(m_ratio_nonNA,
+               groups=groups,
+               samplenames=samplenames,
+               legend_colors = colors_groups,
+               title="IF-adjusted log2 site/protein ratio \n before batch correction",
+               type="centered")
+  heatmap_plot(m_ratio_nonNA_corr,
+               groups=groups,
+               samplenames=samplenames,
+               legend_colors = colors_groups,
+               title="IF-adjusted log2 site/protein ratio \n after batch correction",
+               type="centered")
+}
+
+```
+
+
+```{r Visualize results (non-batch corrected), warning = FALSE, message= FALSE, echo = FALSE}
+
+## Visualize site patterns
+m = df_sites_filtered[,paste0(samplenames)] %>% as.matrix()
+m <- sweep(m, FUN = "/", MARGIN = 1, STATS=rowMeans(m))
+colnames(m) <- samplenames
+m_long <- melt(m, varnames = c("rownumber","sample"))
+m_long$sample <- factor(m_long$sample)
+m_long$group <- factor(set_names(groups, nm=samplenames)[as.character(m_long$sample)]) 
+gg_sites <- ggplot(data=m_long) +
+            geom_hline(yintercept=1, linetype="dashed") +
+            geom_line(aes(x=sample, y=value,group=rownumber), size=0.2, alpha=0.075) +
+            geom_violin(aes(x=sample, y=value, fill=group), alpha=0.6, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5) +
+            geom_boxplot(aes(x=sample, y=value, fill=group), alpha=1, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5, width=0.2) +
+            scale_fill_manual(values=colors_groups[levels(m_long$group)]) +
+            ggtitle("site patterns") +
+            theme_bw() + 
+            theme(legend.position = "none", axis.text.x = element_text(angle = 40, hjust=1)) +
+            scale_y_continuous(breaks=seq(0,3,by=0.5), limits=c(0,3)) 
+print(gg_sites)
+
+
+## Visualize underlying protein patterns
+m = df_sites_filtered[,paste0(samplenames, "__underlyingProtein")] %>% as.matrix()
+m <- sweep(m, FUN = "/", MARGIN = 1, STATS=rowMeans(m))
+protein_ids <- df_sites_filtered[,protein_id_columnname_siteTable] 
+bool_dup <- duplicated(protein_ids) # filter for only unique proteins
+m <- m[!bool_dup,]
+colnames(m) <- samplenames
+m_long <- melt(m, varnames = c("rownumber","sample"))
+m_long$sample <- factor(m_long$sample)
+m_long$group <- factor(set_names(groups, nm=samplenames)[as.character(m_long$sample)]) 
+gg_proteins <- ggplot(data=m_long) +
+               geom_hline(yintercept=1, linetype="dashed") +
+               geom_line(aes(x=sample, y=value,group=rownumber), size=0.2, alpha=0.075) +
+               geom_violin(aes(x=sample, y=value, fill=group), alpha=0.6, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5) +
+               geom_boxplot(aes(x=sample, y=value, fill=group), alpha=1, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5, width=0.2) +
+               scale_fill_manual(values=colors_groups[levels(m_long$group)]) +
+               ggtitle("underlying protein patterns") +
+               theme_bw() + 
+               theme(legend.position = "none", axis.text.x = element_text(angle = 40, hjust=1)) +
+               scale_y_continuous(breaks=seq(0,3,by=0.5), limits=c(0,3)) 
+print(gg_proteins)
+
+
+## Visualize site to protein patterns
+m = df_sites_filtered[,paste0(samplenames, "__siteToProtein")] %>% as.matrix()
+m <- sweep(m, FUN = "/", MARGIN = 1, STATS=rowMeans(m))
+colnames(m) <- samplenames
+m_long <- melt(m, varnames = c("rownumber","sample"))
+m_long$sample <- factor(m_long$sample)
+m_long$group <- factor(set_names(groups, nm=samplenames)[as.character(m_long$sample)]) 
+gg_sitetoprotein <- ggplot(data=m_long) +
+                    geom_hline(yintercept=1, linetype="dashed") +
+                    geom_line(aes(x=sample, y=value,group=rownumber), size=0.2, alpha=0.075) +
+                    geom_violin(aes(x=sample, y=value, fill=group), alpha=0.6, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5) +
+                    geom_boxplot(aes(x=sample, y=value, fill=group), alpha=1, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5, width=0.2) +
+                    scale_fill_manual(values=colors_groups[levels(m_long$group)]) +
+                    ggtitle("site/protein patterns") +
+                    theme_bw() + 
+                    theme(legend.position = "none", axis.text.x = element_text(angle = 40, hjust=1)) +
+                    scale_y_continuous(breaks=seq(0,3,by=0.5), limits=c(0,3)) 
+print(gg_sitetoprotein)
+
+
+## Visualize site to protein patterns IF-adjusted
+m = df_sites_filtered[,paste0(samplenames, "__siteToProtein_IFadjust")] %>% as.matrix()
+m <- sweep(m, FUN = "/", MARGIN = 1, STATS=rowMeans(m))
+colnames(m) <- samplenames
+m_long <- melt(m, varnames = c("rownumber","sample"))
+m_long$sample <- factor(m_long$sample)
+m_long$group <- factor(set_names(groups, nm=samplenames)[as.character(m_long$sample)]) 
+gg_sitetoprotein_IFadjust <- ggplot(data=m_long) +
+                             geom_hline(yintercept=1, linetype="dashed") +
+                             geom_line(aes(x=sample, y=value,group=rownumber), size=0.2, alpha=0.075) +
+                             geom_violin(aes(x=sample, y=value, fill=group), alpha=0.6, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5) +
+                             geom_boxplot(aes(x=sample, y=value, fill=group), alpha=1, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5, width=0.2) +
+                             scale_fill_manual(values=colors_groups[levels(m_long$group)]) +
+                             ggtitle("IF-adjusted site/protein patterns") +
+                             theme_bw() +
+                             theme(legend.position = "none", axis.text.x = element_text(angle = 40, hjust=1)) +
+                             scale_y_continuous(breaks=seq(0,3,by=0.5), limits=c(0,3)) 
+print(gg_sitetoprotein_IFadjust)
+
+```
+
+
+```{r OPTIONAL: Visualize batch-corrected results, warning = FALSE, message= FALSE, echo = FALSE }
+
+if (!is.null(batch)){
+  ## Visualize site patterns (batch-corrected)
+  m = df_sites_filtered[,paste0(samplenames, "__batchCorr")] %>% as.matrix()
+  m <- sweep(m, FUN = "/", MARGIN = 1, STATS=rowMeans(m))
+  colnames(m) <- samplenames
+  m_long <- melt(m, varnames = c("rownumber","sample"))
+  m_long$sample <- factor(m_long$sample)
+  m_long$group <- factor(set_names(groups, nm=samplenames)[as.character(m_long$sample)]) 
+  gg_sites <- ggplot(data=m_long) +              geom_hline(yintercept=1, linetype="dashed") +
+              geom_line(aes(x=sample, y=value,group=rownumber), size=0.2, alpha=0.075) +
+              geom_violin(aes(x=sample, y=value, fill=group), alpha=0.6, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5) +
+              geom_boxplot(aes(x=sample, y=value, fill=group), alpha=1, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5, width=0.2) +
+              scale_fill_manual(values=colors_groups[levels(m_long$group)]) +
+              ggtitle("site patterns (batch-corrected)") +
+              theme_bw() + 
+              theme(legend.position = "none", axis.text.x = element_text(angle = 40, hjust=1)) +
+              scale_y_continuous(breaks=seq(0,3,by=0.5), limits=c(0,3)) 
+  print(gg_sites)
+    
+    
+  ## Visualize underlying protein patterns (batch-corrected)
+  m = df_sites_filtered[,paste0(samplenames, "__underlyingProtein", "__batchCorr")] %>% as.matrix()
+  m <- sweep(m, FUN = "/", MARGIN = 1, STATS=rowMeans(m))
+  protein_ids <- df_sites_filtered[,protein_id_columnname_siteTable] 
+  bool_dup <- duplicated(protein_ids) # filter for only unique proteins
+  m <- m[!bool_dup,]
+  colnames(m) <- samplenames
+  m_long <- melt(m, varnames = c("rownumber","sample"))
+  m_long$sample <- factor(m_long$sample)
+  m_long$group <- factor(set_names(groups, nm=samplenames)[as.character(m_long$sample)]) 
+  gg_proteins <- ggplot(data=m_long) +
+                 geom_hline(yintercept=1, linetype="dashed") +
+                 geom_line(aes(x=sample, y=value,group=rownumber), size=0.2, alpha=0.075) +
+                 geom_violin(aes(x=sample, y=value, fill=group), alpha=0.6, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5) +
+                 geom_boxplot(aes(x=sample, y=value, fill=group), alpha=1, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5, width=0.2) +
+                 scale_fill_manual(values=colors_groups[levels(m_long$group)]) +
+                 ggtitle("underlying protein patterns (batch-corrected)") +
+                 theme_bw() + 
+                 theme(legend.position = "none", axis.text.x = element_text(angle = 40, hjust=1)) +
+                 scale_y_continuous(breaks=seq(0,3,by=0.5), limits=c(0,3)) 
+  print(gg_proteins)
+    
+    
+  ## Visualize site to protein patterns (batch-corrected)
+  m = df_sites_filtered[,paste0(samplenames, "__siteToProtein", "__batchCorr")] %>% as.matrix()
+  m <- sweep(m, FUN = "/", MARGIN = 1, STATS=rowMeans(m))
+  colnames(m) <- samplenames
+  m_long <- melt(m, varnames = c("rownumber","sample"))
+  m_long$sample <- factor(m_long$sample)
+  m_long$group <- factor(set_names(groups, nm=samplenames)[as.character(m_long$sample)]) 
+  gg_sitetoprotein <- ggplot(data=m_long) +
+                      geom_hline(yintercept=1, linetype="dashed") +
+                      geom_line(aes(x=sample, y=value,group=rownumber), size=0.2, alpha=0.075) +
+                      geom_violin(aes(x=sample, y=value, fill=group), alpha=0.6, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5) +
+                      geom_boxplot(aes(x=sample, y=value, fill=group), alpha=1, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5, width=0.2) +
+                      scale_fill_manual(values=colors_groups[levels(m_long$group)]) +
+                      ggtitle("site/protein patterns (batch-corrected)") +
+                      theme_bw() + 
+                      theme(legend.position = "none", axis.text.x = element_text(angle = 40, hjust=1)) +
+                      scale_y_continuous(breaks=seq(0,3,by=0.5), limits=c(0,3)) 
+  print(gg_sitetoprotein)
+    
+    
+  ## Visualize site to protein patterns IF-adjusted (batch-corrected)
+  m = df_sites_filtered[,paste0(samplenames, "__siteToProtein_IFadjust", "__batchCorr")] %>% as.matrix()
+  m <- sweep(m, FUN = "/", MARGIN = 1, STATS=rowMeans(m))
+  colnames(m) <- samplenames
+  m_long <- melt(m, varnames = c("rownumber","sample"))
+  m_long$sample <- factor(m_long$sample)
+  m_long$group <- factor(set_names(groups, nm=samplenames)[as.character(m_long$sample)]) 
+  gg_sitetoprotein_IFadjust <- ggplot(data=m_long) +
+                               geom_hline(yintercept=1, linetype="dashed") +
+                               geom_line(aes(x=sample, y=value,group=rownumber), size=0.2, alpha=0.075) +
+                               geom_violin(aes(x=sample, y=value, fill=group), alpha=0.6, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5) +
+                               geom_boxplot(aes(x=sample, y=value, fill=group), alpha=1, size=0.1, outlier.shape=1, outlier.size = 0.1, outlier.alpha = 0.5, width=0.2) +
+                               scale_fill_manual(values=colors_groups[levels(m_long$group)]) +
+                               ggtitle("IF-adjusted site/protein patterns (batch-corrected)") +
+                               theme_bw() +
+                               theme(legend.position = "none", axis.text.x = element_text(angle = 40, hjust=1)) +
+                               scale_y_continuous(breaks=seq(0,3,by=0.5), limits=c(0,3)) 
+  print(gg_sitetoprotein_IFadjust)
+}  
+
+```
+
+
+```{r Perform ANOVA DE-testing for differences in site intensities}
+
+## Extract data (site intensities), then test for differences between groups via ANOVA
+m <-  df_sites_filtered[,paste0(samplenames)] %>% as.matrix() %>% log2()
+df_sites_filtered$pval_ANOVA <- apply(m, MARGIN = 1,FUN=function(x){
+                        x <- as.numeric(x)
+                        res <- aov(x ~ groups)
+                        if (!is.null(summary(res)[[1]]$"Pr(>F)"[1])){
+                          return(summary(res)[[1]]$"Pr(>F)"[1]) 
+                        } else {return (NA)}
+                      })
+
+
+## Plot results
+ymax_pval <- table(cut(df_sites_filtered$pval_ANOVA, breaks=seq(0,1, length.out=20))) %>% max()
+hist(df_sites_filtered$pval_ANOVA, breaks=20, col="grey", border="grey", xlab="p-value", main="ANOVA site intensities", ylim=c(0,ymax_pval))
+df_sites_filtered$adj.pval_ANOVA <- p.adjust(df_sites_filtered$pval_ANOVA, method = "BH")
+hist(df_sites_filtered$adj.pval_ANOVA, breaks=20, col="orange", border="orange", xlab="adj.p-value", main="ANOVA site intensities")
+
+
+## Print results after multiple testing correction
+n_adj.pval_smaller0.05 <- sum(df_sites_filtered$adj.pval_ANOVA < 0.05)
+writeLines(paste0("Number of significant features after multiple testing correction (ANOVA adj.pval < 0.05):  ", n_adj.pval_smaller0.05))
+
+```
+
+
+```{r Perform ANOVA DE-testing for differences in site/protein ratios, message=FALSE, warning=FALSE}
+
+## Extract data (site/protein ratios), then test for differences between groups via ANOVA
+m_siteToProtein <-  df_sites_filtered[,paste0(samplenames, "__siteToProtein")] %>% as.matrix()
+df_sites_filtered$pval_ANOVA_siteToProtein <- apply(m_siteToProtein, MARGIN = 1, FUN=function(x){
+                        x <- as.numeric(x)
+                        res <- aov(x ~ groups)
+                        if (!is.null(summary(res)[[1]]$"Pr(>F)"[1])){
+                          return(summary(res)[[1]]$"Pr(>F)"[1]) 
+                        } else {return (NA)}
+                      })
+
+
+## Plot results
+ymax_pval <- table(cut(df_sites_filtered$pval_ANOVA, breaks=seq(0,1, length.out=20))) %>% max()
+hist(df_sites_filtered$pval_ANOVA_siteToProtein, breaks=20, col="grey", border="grey", xlab="p-value", main="ANOVA site/protein ratios", ylim=c(0,ymax_pval))
+df_sites_filtered$adj.pval_ANOVA_siteToProtein <- p.adjust(df_sites_filtered$pval_ANOVA_siteToProtein, method = "BH")
+hist(df_sites_filtered$adj.pval_ANOVA_siteToProtein, breaks=20, col="orange", border="orange", xlab="adj.p-value", main="ANOVA site/protein ratios")
+
+
+## Print results after multiple testing correction
+n_adj.pval_smaller0.05 <- sum(df_sites_filtered$adj.pval_ANOVA_siteToProtein < 0.05)
+writeLines(paste0("Number of significant features after multiple testing correction (ANOVA adj.pval < 0.05):  ", n_adj.pval_smaller0.05))
+
+```
+
+
+```{r Perform ANOVA DE-testing for differences in IF-adjusted site/protein ratios. Also add maximum log2 FC column, message=FALSE, warning=FALSE}
+
+## Extract data (IF-adjusted site/protein ratios), then test for differences between groups via ANOVA
+m_siteToProtein_IFadjust <-  df_sites_filtered[,paste0(samplenames, "__siteToProtein_IFadjust")] %>% as.matrix()
+df_sites_filtered$pval_ANOVA_siteToProtein_IFadjust <- apply(m_siteToProtein_IFadjust, MARGIN = 1, FUN=function(x){
+                                                             x <- as.numeric(x)
+                                                             res <- aov(x ~ groups)
+                                                             if (!is.null(summary(res)[[1]]$"Pr(>F)"[1])){
+                                                               return(summary(res)[[1]]$"Pr(>F)"[1]) 
+                                                             } else {return (NA)}
+                                                           })
+
+
+## Plot results
+ymax_pval <- table(cut(df_sites_filtered$pval_ANOVA, breaks=seq(0,1, length.out=20))) %>% max()
+hist(df_sites_filtered$pval_ANOVA_siteToProtein_IFadjust, breaks=20, col="grey", border="grey", xlab="p-value", main="ANOVA site/protein IF-adjusted ratios", ylim=c(0,ymax_pval))
+df_sites_filtered$adj.pval_ANOVA_siteToProtein_IFadjust <- p.adjust(df_sites_filtered$pval_ANOVA_siteToProtein_IFadjust, method = "BH")
+hist(df_sites_filtered$adj.pval_ANOVA_siteToProtein_IFadjust, breaks=20, col="orange", border="orange", xlab="adj.p-value", main="ANOVA site/protein IF-adjusted ratios")
+
+
+## Print results after multiple testing correction
+n_adj.pval_smaller0.05 <- sum(df_sites_filtered$adj.pval_ANOVA_siteToProtein_IFadjust < 0.05)
+writeLines(paste0("# of significant features (ANOVA adj.pval < 0.05): ", n_adj.pval_smaller0.05))
+
+
+## Calculate and save maximum absolute log2 group FC as maximum difference of log2 group mean to 1.
+df_sites_filtered$max_abs_log2_FC_siteToProtein_IFadjust <- apply(m_siteToProtein_IFadjust, MARGIN = 1, FUN=function(x){
+                                                                  x <- as.numeric(x)
+                                                                  res <- tapply(x, INDEX=groups, FUN=mean) %>% log2() %>% abs() %>% max(., na.rm = TRUE)
+                                                                  return(res)
+                                                              })
+
+```
+
+
+```{r OPTIONAL: Perform ANOVA DE-testing for differences in IF-adjusted batch-corrected site/protein ratios. Also add maximum log2 FC column, message=FALSE, warning=FALSE}
+
+if (!is.null(batch)){
+  
+  ## Extract data (IF-adjusted site/protein ratios), then test for differences between groups via ANOVA
+  m_siteToProtein_IFadjust__batchCorr <-  df_sites_filtered[,paste0(samplenames, "__siteToProtein_IFadjust__batchCorr")] %>% as.matrix()
+  df_sites_filtered$pval_ANOVA_siteToProtein_IFadjust__batchCorr <- apply(m_siteToProtein_IFadjust__batchCorr, MARGIN = 1, FUN=function(x){
+                          x <- as.numeric(x)
+                          res <- aov(x ~ groups)
+                          if (!is.null(summary(res)[[1]]$"Pr(>F)"[1])){
+                            return(summary(res)[[1]]$"Pr(>F)"[1]) 
+                          } else {return (NA)}
+                        })
+  
+  
+  ## Plot results
+  ymax_pval <- table(cut(df_sites_filtered$pval_ANOVA_siteToProtein_IFadjust__batchCorr, breaks=seq(0,1, length.out=20))) %>% max()
+  hist(df_sites_filtered$pval_ANOVA_siteToProtein_IFadjust__batchCorr, breaks=20, col="grey", border="grey", xlab="p-value", main="ANOVA site/protein IF-adjusted ratios (batch-corrected)", ylim=c(0,ymax_pval))
+  df_sites_filtered$adj.pval_ANOVA_siteToProtein_IFadjust__batchCorr <- p.adjust(df_sites_filtered$pval_ANOVA_siteToProtein_IFadjust__batchCorr, method = "BH")
+  hist(df_sites_filtered$adj.pval_ANOVA_siteToProtein_IFadjust__batchCorr, breaks=20, col="orange", border="orange", xlab="adj.p-value", main="ANOVA site/protein IF-adjusted ratios (batch-corrected)")
+  
+  
+  ## Print results after multiple testing correction
+  n_adj.pval_smaller0.05 <- sum(df_sites_filtered$adj.pval_ANOVA_siteToProtein_IFadjust__batchCorr < 0.05)
+  writeLines(paste0("# of significant features (ANOVA adj.pval < 0.05): ", n_adj.pval_smaller0.05))
+  
+  
+  ## Calculate and save maximum absolute log2 group FC as maximum difference of log2 group mean to 1.
+  df_sites_filtered$max_abs_log2_FC_siteToProtein_IFadjust__batchCorr <- apply(m_siteToProtein_IFadjust__batchCorr, MARGIN = 1, FUN=function(x){
+                                                                    x <- as.numeric(x)
+                                                                    res <- tapply(x, INDEX=groups, FUN=mean) %>% log2() %>% abs() %>% max(., na.rm = TRUE)
+                                                                    return(res)
+                                                                })
+}
+
+```
+
+
+```{r Export table df_sites_filtered}
+
+# If no output name was given, name resulting table based on input file's name
+if (is.null(output_name)){
+  ind_substring <- rev(unlist(gregexpr(filepath_siteTable, pattern="[\\]|[/]")))[1]
+  outputname_path <- paste0("Results/SiteToProtein_",substring(filepath_siteTable, first = ind_substring + 1, last=nchar(filepath_siteTable)))
+} else {
+  outputname_path <- paste0("Results/",output_name,".txt")
+}
+
+## Export the results
+write.table(df_sites_filtered, file = outputname_path, sep = "\t", col.names = TRUE, row.names=FALSE, quote=FALSE)
+
+
+## Report the export
+writeLines("The result table can be found in:")
+print(outputname_path)
+
+```
+
+
+```{r Save session}
+
+save.image("session_SiteMS2ToProteinMS2.RData")
+
+```
+
+
+```{r SPECIAL: filter for yeast and human sites}
+
+## find yeast and human subdataframe
+bool_human <- grepl(df_sites_filtered$Fasta.headers , pattern="HUMAN") & !grepl(df_sites_filtered$Fasta.headers, pattern="YEAST")
+bool_yeast <- grepl(df_sites_filtered$Fasta.headers , pattern="YEAST") & !grepl(df_sites_filtered$Fasta.headers, pattern="HUMAN")
+table(bool_yeast)
+table(bool_human)
+df_human <- df_sites_filtered[bool_human,]
+df_yeast <- df_sites_filtered[bool_yeast,]
+
+```
+
+
+```{r SPECIAL: plot yeast and human sites}
+
+## Source code to genrate raincloud plots. This code is from the publication "Raincloud plots: a multi-platform tool for robust data visualization", PMID: 31069261. 
+source("summarySE.R")
+source("R_rainclouds.R")
+
+
+## specify yeast and human pattern
+pattern = "Group[0-9]+[.][0-9]+$"
+
+
+## specify id variable columnname
+id_var_colname = "unique_site_identifier"
+
+
+## select yeast and human subdataframe. remove duplicated entries
+m_human <- df_human[,grepl(names(df_human), pattern=pattern)] %>% as.matrix()
+m_yeast <- df_yeast[,grepl(names(df_yeast), pattern=pattern)] %>% as.matrix()
+bool_nondup_human <- !duplicated(df_human[,id_var_colname])
+bool_nondup_yeast <- !duplicated(df_yeast[,id_var_colname])
+m_human <- m_human[bool_nondup_human,]
+m_yeast <- m_yeast[bool_nondup_yeast,]
+                                
+
+## log2 tranform,
+m_human <- m_human %>% log2(.) 
+m_yeast <- m_yeast %>% log2(.)  
+
+
+## summarize to one average value per group
+df_human_summarized <- apply(m_human, 1, simplify = FALSE, FUN = function(x){
+                                                                    summarized_x <- tapply(x, INDEX = groups, FUN=mean, na.rm=TRUE)
+                                                                    summarized_x <- summarized_x[unique(groups)]
+                                                                    return(summarized_x)
+                                                                  }) %>% do.call(rbind, .) 
+df_yeast_summarized <- apply(m_yeast, 1, simplify = FALSE, FUN = function(x){
+                                                                    summarized_x <- tapply(x, INDEX = groups, FUN=mean, na.rm=TRUE)
+                                                                    summarized_x <- summarized_x[unique(groups)]
+                                                                    return(summarized_x)
+                                                                  }) %>% do.call(rbind, .) 
+
+
+## scale to mean 0 within each feature, then transform to dataframe
+df_human_summarized <- df_human_summarized %>% t() %>% scale(.,scale=FALSE) %>% t() %>% as.data.frame()
+df_yeast_summarized <- df_yeast_summarized %>% t() %>% scale(.,scale=FALSE) %>% t() %>% as.data.frame()
+
+
+## add unique id as column. Then create df in long format for ggplotting
+df_human_summarized$uniqueID = rownames(df_human_summarized)
+df_yeast_summarized$uniqueID = rownames(df_yeast_summarized)
+df_human_summarized_long = melt(df_human_summarized, value.name = "value", variable.name = "group", id.vars = "uniqueID")
+df_yeast_summarized_long = melt(df_yeast_summarized, value.name = "value", variable.name = "group", id.vars = "uniqueID")
+
+
+## add organism identity, then rowbind to generate single df for plotting (might as well plot them together)
+df_yeast_summarized_long$organism = "y"
+df_human_summarized_long$organism = "h"
+df_summarized_long = rbind(df_human_summarized_long,df_yeast_summarized_long)
+df_summarized_long$organism <- factor(df_summarized_long$organism, levels = c("h", "y"))
+df_summarized_long$group <- factor(df_summarized_long$group, levels = c("Group6", "Group9", "Group12"))
+
+
+## create ggplot
+orgCols = c("#BFBEBE", "#3A97AE")
+alphaValues = c(0.15, 0.15)
+pointCols = sapply(1:2, function(i){alpha(orgCols[i], alphaValues[i])})
+summary_df_summarized_long =  summarySE(df_summarized_long, measurevar = "value", groupvars=c("group", "organism"))
+summary_df_summarized_long$group_boxplot = ifelse(summary_df_summarized_long$organism == "h", yes = as.numeric(summary_df_summarized_long$group) - 0.15, no = as.numeric(summary_df_summarized_long$group)  + 0.15)
+ggplot_site <- ggplot(df_summarized_long, aes(x = group, y = value, fill = organism)) +
+                geom_line(data = summary_df_summarized_long, aes(x = group_boxplot, y = value_median, group = organism, colour = organism), linetype = 1, alpha=0.8, lwd=0.3) +
+                geom_jitter(aes(x=group, y=value, col=organism), position = position_jitterdodge(dodge.width = 0.6, jitter.width = 0.3), size=0.3) +
+                geom_boxplot(aes(x=group, y=value), outlier.shape = NA, alpha = 0, width = .55, colour = "black", position = position_dodge(width=0.6), lwd=0.3) + 
+                scale_fill_manual(values=c("#BFBEBE", "#3A97AE")) + 
+                scale_color_manual(values =  pointCols) +
+                scale_y_continuous(breaks=seq(from=-1,to=1, by=0.25), limits=c(-0.7,0.7))+
+                scale_x_discrete(expand = c(-0.6, 1.6))+
+                ylab("Relative abundance [log2] ") + xlab("Sample group") +
+                ggtitle("Acetyl-site level [MS2]") +
+                theme_cowplot() +
+                theme(legend.position="none") +
+                theme(text=element_text(size=6)) +
+                theme(axis.text.x= element_text(size=6)) +
+                theme(axis.text.y= element_text(size=6))
+ggplot_site
+
+# ggplot_site.2 <- ggplot(df_summarized_long, aes(x = group, y = value, fill = organism)) +
+#                 geom_line(data = summary_df_summarized_long, aes(x = group_boxplot, y = value_median, group = organism, colour = organism), linetype = 1, alpha=0.8, lwd=0.3) +
+#                 geom_violin(aes(x=group, y=value, col=organism), position = position_jitterdodge(dodge.width = 0.6, jitter.width = 0), size=0, alpha=0.8) +
+#                 geom_boxplot(aes(x=group, y=value), outlier.shape = NA, alpha = 0, width = .15, colour = "black", position = position_dodge(width=0.6), lwd=0.2) + 
+#                 scale_fill_manual(values=c("#BFBEBE", "#3A97AE")) + 
+#                 scale_color_manual(values =  pointCols) +
+#                 scale_y_continuous(breaks=seq(from=-1,to=1, by=0.25), limits=c(-0.7,0.7))+
+#                 scale_x_discrete(expand = c(-0.9, 1.9))+
+#                 ylab("Relative abundance [log2] ") + xlab("Sample group") +
+#                 ggtitle("Acetyl-site level [MS2]") +
+#                 theme_cowplot() +
+#                 theme(legend.position="none") +
+#                 theme(text=element_text(size=6)) +
+#                 theme(axis.text.x= element_text(size=6)) +
+#                 theme(axis.text.y= element_text(size=6))
+# ggplot_site.2
+
+
+```
+
+
+```{r SPECIAL: plot yeast and human proteins}
+
+## Source code to genrate raincloud plots. This code is from the publication "Raincloud plots: a multi-platform tool for robust data visualization", PMID: 31069261. 
+source("summarySE.R")
+source("R_rainclouds.R")
+
+
+## specify yeast and human pattern
+pattern = "Group[0-9]+[.][0-9]+__underlyingProtein$"
+
+
+## specify id variable columnname
+id_var_colname = "Protein.group.IDs"
+
+
+## select yeast and human subdataframe. remove duplicated entries
+m_human <- df_human[,grepl(names(df_human), pattern=pattern)] %>% as.matrix()
+m_yeast <- df_yeast[,grepl(names(df_yeast), pattern=pattern)] %>% as.matrix()
+bool_nondup_human <- !duplicated(df_human[,id_var_colname])
+bool_nondup_yeast <- !duplicated(df_yeast[,id_var_colname])
+m_human <- m_human[bool_nondup_human,]
+m_yeast <- m_yeast[bool_nondup_yeast,]
+                                
+
+## log2 tranform,
+m_human <- m_human %>% log2(.) 
+m_yeast <- m_yeast %>% log2(.)  
+
+
+## summarize to one average value per group
+df_human_summarized <- apply(m_human, 1, simplify = FALSE, FUN = function(x){
+                                                                    summarized_x <- tapply(x, INDEX = groups, FUN=mean, na.rm=TRUE)
+                                                                    summarized_x <- summarized_x[unique(groups)]
+                                                                    return(summarized_x)
+                                                                  }) %>% do.call(rbind, .) 
+df_yeast_summarized <- apply(m_yeast, 1, simplify = FALSE, FUN = function(x){
+                                                                    summarized_x <- tapply(x, INDEX = groups, FUN=mean, na.rm=TRUE)
+                                                                    summarized_x <- summarized_x[unique(groups)]
+                                                                    return(summarized_x)
+                                                                  }) %>% do.call(rbind, .) 
+
+
+## scale to mean 0 within each feature, then transform to dataframe
+df_human_summarized <- df_human_summarized %>% t() %>% scale(.,scale=FALSE) %>% t() %>% as.data.frame()
+df_yeast_summarized <- df_yeast_summarized %>% t() %>% scale(.,scale=FALSE) %>% t() %>% as.data.frame()
+
+
+## add unique id as column. Then create df in long format for ggplotting
+df_human_summarized$uniqueID = rownames(df_human_summarized)
+df_yeast_summarized$uniqueID = rownames(df_yeast_summarized)
+df_human_summarized_long = melt(df_human_summarized, value.name = "value", variable.name = "group", id.vars = "uniqueID")
+df_yeast_summarized_long = melt(df_yeast_summarized, value.name = "value", variable.name = "group", id.vars = "uniqueID")
+
+
+## add organism identity, then rowbind to generate single df for plotting (might as well plot them together)
+df_yeast_summarized_long$organism = "y"
+df_human_summarized_long$organism = "h"
+df_summarized_long = rbind(df_human_summarized_long,df_yeast_summarized_long)
+df_summarized_long$organism <- factor(df_summarized_long$organism, levels = c("h", "y"))
+df_summarized_long$group <- factor(df_summarized_long$group, levels = c("Group6", "Group9", "Group12"))
+
+
+
+
+
+
+## create ggplot
+orgCols = c("#BFBEBE", "#3A97AE")
+alphaValues = c(0.15, 0.15)
+pointCols = sapply(1:2, function(i){alpha(orgCols[i], alphaValues[i])})
+summary_df_summarized_long =  summarySE(df_summarized_long, measurevar = "value", groupvars=c("group", "organism"))
+summary_df_summarized_long$group_boxplot = ifelse(summary_df_summarized_long$organism == "h", yes = as.numeric(summary_df_summarized_long$group) - 0.15, no = as.numeric(summary_df_summarized_long$group)  + 0.15)
+ggplot_protein <- ggplot(df_summarized_long, aes(x = group, y = value, fill = organism)) +
+                geom_line(data = summary_df_summarized_long, aes(x = group_boxplot, y = value_median, group = organism, colour = organism), linetype = 1, alpha=0.8, lwd=0.3) +
+                geom_jitter(aes(x=group, y=value, col=organism), position = position_jitterdodge(dodge.width = 0.6, jitter.width = 0.3), size=0.3) +
+                geom_boxplot(aes(x=group, y=value), outlier.shape = NA, alpha = 0, width = .55, colour = "black", position = position_dodge(width=0.6), lwd=0.3) + 
+                scale_color_manual(values =  pointCols) +
+                scale_y_continuous(breaks=seq(from=-1,to=1, by=0.25), limits=c(-0.7,0.7))+
+                scale_x_discrete(expand = c(-0.6, 1.6))+
+                ylab("Relative abundance [log2] ") + xlab("Sample group") +
+                ggtitle("Underlying protein level [MS3]") +
+                theme_cowplot() +
+                theme(legend.position="none") +
+                theme(text=element_text(size=6)) +
+                theme(axis.text.x= element_text(size=6)) +
+                theme(axis.text.y= element_text(size=6))
+ggplot_protein
+
+# ggplot_protein.2 <- ggplot(df_summarized_long, aes(x = group, y = value, fill = organism)) +
+#                 geom_line(data = summary_df_summarized_long, aes(x = group_boxplot, y = value_median, group = organism, colour = organism), linetype = 1, alpha=0.8, lwd=0.3) +
+#                 geom_violin(aes(x=group, y=value, col=organism), position = position_jitterdodge(dodge.width = 0.6, jitter.width = 0), size=0, alpha=0.8) +
+#                 geom_boxplot(aes(x=group, y=value), outlier.shape = NA, alpha = 0, width = .15, colour = "black", position = position_dodge(width=0.6), lwd=0.2) + 
+#                 scale_fill_manual(values=c("#BFBEBE", "#3A97AE")) + 
+#                 scale_color_manual(values =  pointCols) +
+#                 scale_y_continuous(breaks=seq(from=-1,to=1, by=0.25), limits=c(-0.7,0.7))+
+#                 scale_x_discrete(expand = c(-0.9, 1.9))+
+#                 ylab("Relative abundance [log2] ") + xlab("Sample group") +
+#                 ggtitle("Underlying protein level [MS3]") +
+#                 theme_cowplot() +
+#                 theme(legend.position="none") +
+#                 theme(text=element_text(size=6)) +
+#                 theme(axis.text.x= element_text(size=6)) +
+#                 theme(axis.text.y= element_text(size=6))
+# ggplot_protein.2
+
+```
+
+
+```{r SPECIAL: plot yeast and human site-to-proteins}
+
+## Source code to genrate raincloud plots. This code is from the publication "Raincloud plots: a multi-platform tool for robust data visualization", PMID: 31069261. 
+source("summarySE.R")
+
+## specify yeast and human pattern
+pattern = "Group[0-9]+[.][0-9]+__siteToProtein$"
+
+
+## specify id variable columnname
+id_var_colname = "unique_site_identifier"
+
+
+## select yeast and human subdataframe. remove duplicated entries
+m_human <- df_human[,grepl(names(df_human), pattern=pattern)] %>% as.matrix()
+m_yeast <- df_yeast[,grepl(names(df_yeast), pattern=pattern)] %>% as.matrix()
+bool_nondup_human <- !duplicated(df_human[,id_var_colname])
+bool_nondup_yeast <- !duplicated(df_yeast[,id_var_colname])
+m_human <- m_human[bool_nondup_human,]
+m_yeast <- m_yeast[bool_nondup_yeast,]
+                                
+
+## log2 tranform,
+m_human <- m_human %>% log2(.) 
+m_yeast <- m_yeast %>% log2(.)  
+
+
+## summarize to one average value per group
+df_human_summarized <- apply(m_human, 1, simplify = FALSE, FUN = function(x){
+                                                                    summarized_x <- tapply(x, INDEX = groups, FUN=mean, na.rm=TRUE)
+                                                                    summarized_x <- summarized_x[unique(groups)]
+                                                                    return(summarized_x)
+                                                                  }) %>% do.call(rbind, .) 
+df_yeast_summarized <- apply(m_yeast, 1, simplify = FALSE, FUN = function(x){
+                                                                    summarized_x <- tapply(x, INDEX = groups, FUN=mean, na.rm=TRUE)
+                                                                    summarized_x <- summarized_x[unique(groups)]
+                                                                    return(summarized_x)
+                                                                  }) %>% do.call(rbind, .) 
+
+
+## scale to mean 0 within each feature, then transform to dataframe
+df_human_summarized <- df_human_summarized %>% t() %>% scale(.,scale=FALSE) %>% t() %>% as.data.frame()
+df_yeast_summarized <- df_yeast_summarized %>% t() %>% scale(.,scale=FALSE) %>% t() %>% as.data.frame()
+
+
+
+## add unique id as column. Then create df in long format for ggplotting
+df_human_summarized$uniqueID = rownames(df_human_summarized)
+df_yeast_summarized$uniqueID = rownames(df_yeast_summarized)
+df_human_summarized_long = melt(df_human_summarized, value.name = "value", variable.name = "group", id.vars = "uniqueID")
+df_yeast_summarized_long = melt(df_yeast_summarized, value.name = "value", variable.name = "group", id.vars = "uniqueID")
+
+
+
+## add organism identity, then rowbind to generate single df for plotting (might as well plot them together)
+df_yeast_summarized_long$organism = "y"
+df_human_summarized_long$organism = "h"
+df_summarized_long = rbind(df_human_summarized_long,df_yeast_summarized_long)
+df_summarized_long$organism <- factor(df_summarized_long$organism, levels = c("h", "y"))
+df_summarized_long$group <- factor(df_summarized_long$group, levels = c("Group6", "Group9", "Group12"))
+
+
+## create ggplot
+orgCols = c("#BFBEBE", "#3A97AE")
+alphaValues = c(0.15, 0.15)
+pointCols = sapply(1:2, function(i){alpha(orgCols[i], alphaValues[i])})
+summary_df_summarized_long =  summarySE(df_summarized_long, measurevar = "value", groupvars=c("group", "organism"))
+summary_df_summarized_long$group_boxplot = ifelse(summary_df_summarized_long$organism == "h", yes = as.numeric(summary_df_summarized_long$group) - 0.15, no = as.numeric(summary_df_summarized_long$group)  + 0.15)
+ggplot_siteToProtein <- ggplot(df_summarized_long, aes(x = group, y = value, fill = organism)) +
+                geom_line(data = summary_df_summarized_long, aes(x = group_boxplot, y = value_median, group = organism, colour = organism), linetype = 1, alpha=0.8, lwd=0.3) +
+                geom_jitter(aes(x=group, y=value, col=organism), position = position_jitterdodge(dodge.width = 0.6, jitter.width = 0.3), size=0.3) +
+                geom_boxplot(aes(x=group, y=value), outlier.shape = NA, alpha = 0, width = .55, colour = "black", position = position_dodge(width=0.6), lwd=0.3) + 
+                scale_color_manual(values =  pointCols) +
+                scale_y_continuous(breaks=seq(from=-1,to=1, by=0.25), limits=c(-0.7,0.7))+
+                scale_x_discrete(expand = c(-0.6, 1.6))+
+                ylab("Relative abundance [log2] ") + xlab("Sample group") +
+                ggtitle("Acetyl-site/protein level [MS2/MS3]") +
+                theme_cowplot() +
+                theme(legend.position="none") +
+                theme(text=element_text(size=6)) +
+                theme(axis.text.x= element_text(size=6)) +
+                theme(axis.text.y= element_text(size=6))
+ggplot_siteToProtein
+
+
+# ggplot_siteToProtein.2 <- ggplot(df_summarized_long, aes(x = group, y = value, fill = organism)) +
+#                 geom_line(data = summary_df_summarized_long, aes(x = group_boxplot, y = value_median, group = organism, colour = organism), linetype = 1, alpha=0.8, lwd=0.3) +
+#                 geom_violin(aes(x=group, y=value, col=organism), position = position_jitterdodge(dodge.width = 0.6, jitter.width = 0), size=0, alpha=0.8) +
+#                 geom_boxplot(aes(x=group, y=value), outlier.shape = NA, alpha = 0, width = .15, colour = "black", position = position_dodge(width=0.6), lwd=0.2) + 
+#                 scale_fill_manual(values=c("#BFBEBE", "#3A97AE")) + 
+#                 scale_color_manual(values =  pointCols) +
+#                 scale_y_continuous(breaks=seq(from=-1,to=1, by=0.25), limits=c(-0.7,0.7))+
+#                 scale_x_discrete(expand = c(-0.9, 1.9))+
+#                 ylab("Relative abundance [log2] ") + xlab("Sample group") +
+#                 ggtitle("Acetyl-site/protein level [MS2/MS3]") +
+#                 theme_cowplot() +
+#                 theme(legend.position="none") +
+#                 theme(text=element_text(size=6)) +
+#                 theme(axis.text.x= element_text(size=6)) +
+#                 theme(axis.text.y= element_text(size=6))
+# ggplot_siteToProteoin.2
+
+
+```
+
+
+```{r SPECIAL: plot yeast and human site-to-proteins interference-adjusted}
+
+## Source code to genrate raincloud plots. This code is from the publication "Raincloud plots: a multi-platform tool for robust data visualization", PMID: 31069261. 
+source("summarySE.R")
+
+## specify yeast and human pattern
+pattern = "Group[0-9]+[.][0-9]+__siteToProtein_IFadjust$"
+
+
+## specify id variable columnname
+id_var_colname = "unique_site_identifier"
+
+
+## select yeast and human subdataframe. remove duplicated entries
+m_human <- df_human[,grepl(names(df_human), pattern=pattern)] %>% as.matrix()
+m_yeast <- df_yeast[,grepl(names(df_yeast), pattern=pattern)] %>% as.matrix()
+bool_nondup_human <- !duplicated(df_human[,id_var_colname])
+bool_nondup_yeast <- !duplicated(df_yeast[,id_var_colname])
+m_human <- m_human[bool_nondup_human,]
+m_yeast <- m_yeast[bool_nondup_yeast,]
+                                
+
+## log2 tranform,
+m_human <- m_human %>% log2(.) 
+m_yeast <- m_yeast %>% log2(.)  
+
+
+## summarize to one average value per group
+df_human_summarized <- apply(m_human, 1, simplify = FALSE, FUN = function(x){
+                                                                    summarized_x <- tapply(x, INDEX = groups, FUN=mean, na.rm=TRUE)
+                                                                    summarized_x <- summarized_x[unique(groups)]
+                                                                    return(summarized_x)
+                                                                  }) %>% do.call(rbind, .) 
+df_yeast_summarized <- apply(m_yeast, 1, simplify = FALSE, FUN = function(x){
+                                                                    summarized_x <- tapply(x, INDEX = groups, FUN=mean, na.rm=TRUE)
+                                                                    summarized_x <- summarized_x[unique(groups)]
+                                                                    return(summarized_x)
+                                                                  }) %>% do.call(rbind, .) 
+
+
+## scale to mean 0 within each feature, then transform to dataframe
+df_human_summarized <- df_human_summarized %>% t() %>% scale(.,scale=FALSE) %>% t() %>% as.data.frame()
+df_yeast_summarized <- df_yeast_summarized %>% t() %>% scale(.,scale=FALSE) %>% t() %>% as.data.frame()
+
+
+
+## add unique id as column. Then create df in long format for ggplotting
+df_human_summarized$uniqueID = rownames(df_human_summarized)
+df_yeast_summarized$uniqueID = rownames(df_yeast_summarized)
+df_human_summarized_long = melt(df_human_summarized, value.name = "value", variable.name = "group", id.vars = "uniqueID")
+df_yeast_summarized_long = melt(df_yeast_summarized, value.name = "value", variable.name = "group", id.vars = "uniqueID")
+
+
+
+## add organism identity, then rowbind to generate single df for plotting (might as well plot them together)
+df_yeast_summarized_long$organism = "y"
+df_human_summarized_long$organism = "h"
+df_summarized_long = rbind(df_human_summarized_long,df_yeast_summarized_long)
+df_summarized_long$organism <- factor(df_summarized_long$organism, levels = c("h", "y"))
+df_summarized_long$group <- factor(df_summarized_long$group, levels = c("Group6", "Group9", "Group12"))
+
+
+
+## create ggplot
+orgCols = c("#BFBEBE", "#3A97AE")
+alphaValues = c(0.15, 0.15)
+pointCols = sapply(1:2, function(i){alpha(orgCols[i], alphaValues[i])})
+summary_df_summarized_long =  summarySE(df_summarized_long, measurevar = "value", groupvars=c("group", "organism"))
+summary_df_summarized_long$group_boxplot = ifelse(summary_df_summarized_long$organism == "h", yes = as.numeric(summary_df_summarized_long$group) - 0.15, no = as.numeric(summary_df_summarized_long$group)  + 0.15)
+ggplot_siteToProtein_IFadjusted <- ggplot(df_summarized_long, aes(x = group, y = value, fill = organism)) +
+                geom_line(data = summary_df_summarized_long, aes(x = group_boxplot, y = value_median, group = organism, colour = organism), linetype = 1, alpha=0.8, lwd=0.3) +
+                geom_jitter(aes(x=group, y=value, col=organism), position = position_jitterdodge(dodge.width = 0.6, jitter.width = 0.3), size=0.3) +
+                geom_boxplot(aes(x=group, y=value), outlier.shape = NA, alpha = 0, width = .55, colour = "black", position = position_dodge(width=0.6), lwd=0.3) + 
+                scale_color_manual(values =  pointCols) +
+                scale_y_continuous(breaks=seq(from=-1,to=1, by=0.25), limits=c(-0.7,0.7))+
+                scale_x_discrete(expand = c(-0.6, 1.6))+
+                ylab("Relative abundance [log2] ") + xlab("Sample group") +
+                ggtitle("Acetyl-site/protein level [MS2/MS3, IF-adjusted]") +
+                theme_cowplot() +
+                theme(legend.position="none") +
+                theme(text=element_text(size=6)) +
+                theme(axis.text.x= element_text(size=6)) +
+                theme(axis.text.y= element_text(size=6))
+ggplot_siteToProtein_IFadjusted
+
+# ggplot_siteToProtein_IFadjusted.2 <- ggplot(df_summarized_long, aes(x = group, y = value, fill = organism)) +
+#                 geom_line(data = summary_df_summarized_long, aes(x = group_boxplot, y = value_median, group = organism, colour = organism), linetype = 1, alpha=0.8, lwd=0.3) +
+#                 geom_violin(aes(x=group, y=value, col=organism), position = position_jitterdodge(dodge.width = 0.6, jitter.width = 0), size=0, alpha=0.8) +
+#                 geom_boxplot(aes(x=group, y=value), outlier.shape = NA, alpha = 0, width = .15, colour = "black", position = position_dodge(width=0.6), lwd=0.2) + 
+#                 scale_fill_manual(values=c("#BFBEBE", "#3A97AE")) + 
+#                 scale_color_manual(values =  pointCols) +
+#                 scale_y_continuous(breaks=seq(from=-1,to=1, by=0.25), limits=c(-0.7,0.7))+
+#                 scale_x_discrete(expand = c(-1.9, 1.9))+
+#                 ylab("Relative abundance [log2] ") + xlab("Sample group") +
+#                 ggtitle("Acetyl-site/protein level [MS2/MS3, IF-adjusted]") +
+#                 theme_cowplot() +
+#                 theme(legend.position="none") +
+#                 theme(text=element_text(size=6)) +
+#                 theme(axis.text.x= element_text(size=6)) +
+#                 theme(axis.text.y= element_text(size=6))
+# ggplot_siteToProtein_IFadjusted.2
+
+
+
+```
+
+
+```{r SPECIAL: plot yeast and human site-to-proteins interference-adjusted}
+
+## stitch single plots together
+grid_all <- plot_grid(ggplot_site,
+                      ggplot_protein,
+                      ggplot_siteToProtein,
+                      ggplot_siteToProtein_IFadjusted,
+                      nrow=1)
+ggsave(grid_all, file ="Fig5D__AcetylsiteToProtein_YeastHuman_MS2toMS3.pdf", width = 7.8, height = 1.7)
+# grid_all.2 <- plot_grid(ggplot_site.2,
+#                       ggplot_protein.2,
+#                       ggplot_siteToProtein.2,
+#                       ggplot_siteToProtein_IFadjusted.2,
+#                       nrow=1)
+# ggsave(grid_all.2, file ="Fig5D__AcetylsiteToProtein_YeastHuman_MS2toMS3.2.pdf", width = 7.8, height = 1.7)
+
+
+```
+
+
+```{r}
+
+```
+

@@ -1,0 +1,50 @@
+
+## specify search result filepath (character vector, each entry pointing to PSM table of the respective experiment)
+search_results_filepaths =  c("diff_isolWindow/0p4Th/psm.tsv",
+                              "diff_isolWindow/0p7Th/psm.tsv",
+                              "diff_isolWindow/2p0Th/psm.tsv")
+
+# specify output directory 
+output_dir = "diff_isolWindow"
+
+## specify names of the experiments (character vector)
+exp_names = c("0.4Th", "0.7Th", "2.0Th")
+
+## what is the experiment about? change xlab
+xlab="Isolation window width"
+
+## specify reporter ion intensity column patterns (character, regular expression)
+reporterIon_pattern ="sample[.][0-9][0-9]"
+
+## define group vector
+groups = c("blank", "blank", "blank", "Group0", "Group6", "Group0", "Group6", "Group0", "Group6", "blank", "Group9", "Group12", "Group9","Group12", "Group9", "Group12")
+
+## define organism column name
+OrganismInfocolName = OrganismInfocolName = c("Protein", "Mapped.Proteins")
+
+## define DE organism name and NDE organism name as written in organism column name
+OS_DE = "YEAST"
+OS_NDE = "HUMAN"
+
+## peptide column
+peptide_column = "Peptide"
+
+## protein column
+protein_column = "Protein"
+
+## samplecolors
+pal <- colorRampPalette(colors=c("white", "turquoise", "black"))
+N <- length(search_results_filepaths)
+samplecolors = pal(N + 2)[2:(N+1)]
+samplecolors=c("#DCB9A8", "#A24A39", "#710002")
+
+
+## impurity correction matrix
+impurity_matrix  = as.matrix(read.csv(file="impurity_matrix_tmtpro.csv",
+                                      sep=",", header=TRUE, row.names = 1))
+
+## subset reporterIons for normalization because non-Empty channels
+subset_reportersnonEmpty <- c(4:9,11:16)
+
+## filter_maxIT
+filter_maxIT <- FALSE

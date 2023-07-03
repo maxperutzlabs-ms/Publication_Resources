@@ -1,0 +1,393 @@
+---
+title: "Evaluation of interference-corrected Protein intensities (yeast human experiment)"
+author: "Moritz Madern"
+date: "2022-06-01"
+---
+
+
+```{r Load required packages & functions and define relevant variables}
+
+## load required packages
+library(tidyverse)
+library(cowplot)
+
+## load required function
+source("functions_ROC&Volcano.R")
+
+## specify groups
+groups <- c("Group0", "Group6", "Group0", "Group6", "Group0", "Group6", 
+            "Group9", "Group12", "Group9", "Group12", "Group9", "Group12")
+
+```
+
+
+```{r Read in data, filter and extract intensity columns}
+
+## read in proteins table containing EIL-corrected reporter ion intensities (output from Interference Modeller v1.2: "IM_v1.2__MS2_YeastHuman.Rmd")
+df_eil <- read.delim("Results/Proteins.txt", header=TRUE, sep="\t")
+
+## read in proteins table containing PPF-corrected reporter ion intensities (output from Interference Modeller v1.2: "IM_v1.2__MS2_YeastHuman_PPF-basedCorrection.Rmd")
+df_ppf <- read.delim("Results/Proteins_PPF-basedCorrection.txt", header=TRUE, sep="\t")
+
+
+## check if order is identical
+all(df_eil$Proteins == df_ppf$Proteins)
+
+
+## filter out proteins that are ambiguous (i.e. matching to both yeast and human sequences)
+bool_kick <- grepl(df_eil$Proteins, pattern="YEAST") & grepl(df_eil$Proteins, pattern="HUMAN")
+df_eil <- df_eil[!bool_kick,]
+df_ppf <- df_ppf[!bool_kick,]
+
+
+## filter for proteins with at least 2 unique peptides
+df_eil <- df_eil[df_eil$nrPeptides >= 2,]
+df_ppf <- df_ppf[df_ppf$nrPeptides >= 2,]
+
+
+## filter out proteins with pattern "CON__"
+bool_con <- grepl(df_eil$Proteins, pattern="CON__")
+df_eil <- df_eil[!bool_con,]
+df_ppf <- df_ppf[!bool_con,]
+
+
+## extract the three intensities (uncorrected, PPF-corrected, EIL-corrected) in separate matrices
+m_uncorr <- df_eil[,grepl(names(df_eil), pattern = "reporters_[0-9]+[NC]_norm$")] %>% as.matrix()
+m_EIL <- df_eil[,grepl(names(df_eil), pattern = "reporters_[0-9]+[NC]_norm__interference_corrected$")] %>% as.matrix()
+m_PPF <- df_ppf[,grepl(names(df_ppf), pattern = "reporters_[0-9]+[NC]_norm__interference_corrected")] %>% as.matrix()
+
+```
+
+
+```{r Define and calculate relevant variables}
+
+## group identity
+groups <- c("Group0", "Group6", "Group0", "Group6", "Group0", "Group6", 
+            "Group9", "Group12", "Group9", "Group12", "Group9", "Group12")
+
+## determine organism identity
+yeast <- ifelse(grepl(df_eil$Proteins, pattern="YEAST") & !grepl(df_eil$Proteins, pattern="HUMAN"), yes="y", no="")
+human <- ifelse(!grepl(df_eil$Proteins, pattern="YEAST") & grepl(df_eil$Proteins, pattern="HUMAN"), yes="h", no="")
+organism <- paste0(yeast,human)
+table(organism)   # check if mutually exclusive
+
+## determine color palette
+#pal <- colorRampPalette(colors=c("mediumpurple3", "purple4"))
+#type_colors = pal(3)
+type_colors = c("#A9DEE3", "#4297B6", "#0C0250")
+
+```
+
+
+```{r Investigate observed FC vs theoretical FC on protein level for 16plex}
+
+## write function that plots populations of observed FC vs theoretical FC
+check_FCaccuracy <- function(abundance_matrix,        # a matrix, rows correspond to features and cols correspond to samples
+                           log2transform = TRUE,      # if true, log2 transformation of data will be performed
+                           groupsOfSamples,           # character vector disclosing group identity of samples
+                           pairwise_comparison,       # list where each entry is a vector of length 2 that contains groups to be tested. Names of groups will be used as axis labels
+                          theoretical_FC,             # vector that contains true FC of pairwise comparisons
+                           type=NULL,
+                           protein=df_eil$Proteins,
+                           organism=organism){                
+
+  # replace 0 with NAs
+  stopifnot(is.matrix(abundance_matrix))
+  abundance_matrix[abundance_matrix==0] <- NA
+  
+  # log2 data if respective parameter is set to 2
+  if(log2transform){ abundance_matrix <- log2(abundance_matrix) }
+  
+  # get log2 theoretical fold changes
+  log_theoretical_FC <- log2(theoretical_FC)
+  
+  # go over all pairwise comparisons and store fold changes
+  N <- length(pairwise_comparison)
+  list_FC <- vector(mode="list", length=N)
+  for (i in 1:N){
+    pairwise_comparison_i <- pairwise_comparison[[i]]
+    group2 <- pairwise_comparison_i[1]
+    group1 <- pairwise_comparison_i[2]
+    m2 <- abundance_matrix[,groupsOfSamples %in% group2]
+    m1 <- abundance_matrix[,groupsOfSamples %in% group1]
+    log2_FC <- rowMeans(m2, na.rm=TRUE) - rowMeans(m1, na.rm = TRUE)
+    list_FC[[i]] <- data.frame(observed_log2FC = log2_FC, 
+                               theoretical_FC = theoretical_FC[i],
+                               theoretical_log2FC = log2(theoretical_FC[i]),
+                               protein=protein,
+                               type=type,
+                               organism=organism)
+  }
+  df_FC <- do.call("rbind", args=list_FC)
+  return(df_FC= df_FC)
+}
+
+
+## Calculate all fold changes for each correction type
+df_res_uncorrected <- check_FCaccuracy(abundance_matrix = m_uncorr,
+                                     log2transform = TRUE,
+                                     groupsOfSamples = groups,
+                                     pairwise_comparison = list(c("Group12", "Group9"), c("Group9", "Group6"), c("Group12", "Group6"), c("Group9","Group0")),
+                                     theoretical_FC = c(1.333, 1.5, 2.0,1000),
+                                     type = "uncorrected",
+                                     protein=df_eil$Proteins,
+                                     organism=organism)
+
+
+df_res_EILcorrected<- check_FCaccuracy(abundance_matrix = m_EIL,
+                                     log2transform = TRUE,
+                                     groupsOfSamples = groups,
+                                     pairwise_comparison = list(c("Group12", "Group9"), c("Group9", "Group6"), c("Group12", "Group6"), c("Group9","Group0")),
+                                     theoretical_FC = c(1.333, 1.5, 2.0,1000),
+                                     type = "EILcorrected",
+                                     protein=df_eil$Proteins,
+                                     organism=organism)
+
+
+df_res_PPFcorrected<- check_FCaccuracy(abundance_matrix = m_PPF,
+                                     log2transform = TRUE,
+                                     groupsOfSamples = groups,
+                                     pairwise_comparison = list(c("Group12", "Group9"), c("Group9", "Group6"), c("Group12", "Group6"), c("Group9","Group0")),
+                                     theoretical_FC = c(1.333, 1.5, 2.0, 1000),
+                                     type = "PPFcorrected",
+                                     protein=df_eil$Proteins,
+                                     organism=organism)
+
+
+## Rowbind FC results to single dataframe
+df_res <- rbind(df_res_uncorrected,
+                df_res_EILcorrected,
+                df_res_PPFcorrected)
+df_res$type <- factor(df_res$type, levels=c("uncorrected", "PPFcorrected", "EILcorrected"))
+
+
+## Produce plots for paper (theoretical FC 1.33)
+ratio_plot_FC1.33 <- df_res %>% filter(theoretical_FC ==1.333) %>% 
+              ggplot(.) +
+              geom_vline(xintercept=log2(1.33),col="black", linetype=2, size=0.4) +
+              geom_density(aes(x=observed_log2FC, col = type, linetype = organism, size=organism, alpha=organism, fill=type)) +
+              scale_fill_manual(values=type_colors) +
+              scale_alpha_manual(values=c(0.3,0.3)) +
+              xlab("Fold Change [log2]") + 
+              scale_linetype_manual(values=c(1,2)) +
+              scale_size_manual(values=c(0.6,0.6)) +
+              scale_color_manual(values=type_colors) +
+              xlim(-0.35,0.7) +
+              theme_bw()
+ratio_plot_FC1.33 <- ratio_plot_FC1.33 + theme(legend.key.size = unit(0.3, 'cm'))
+pdf(file = paste0("Results/Fig5B.pdf"), width = 3.2, height=1.5)
+ratio_plot_FC1.33 
+dev.off()
+
+
+
+## Produce plots for paper (theoretical FC 1.5)
+ratio_plot_FC1.5 <- df_res %>% filter(theoretical_FC ==1.5) %>% 
+              ggplot(.) +
+              geom_vline(xintercept=log2(1.5),col="black", linetype=2, size=0.4) +
+              geom_density(aes(x=observed_log2FC, col = type, linetype = organism, size=organism, alpha=organism, fill=type)) +
+              scale_fill_manual(values=type_colors) +
+              scale_alpha_manual(values=c(0.3,0.3)) +
+              xlab("Fold Change [log2]") + 
+              scale_linetype_manual(values=c(1,2)) +
+              scale_size_manual(values=c(0.6,0.6)) +
+              scale_color_manual(values=type_colors) +
+              scale_x_continuous(breaks=c(-0.25,0,0.25,0.5,0.75),limits=c(-0.35,0.9)) +
+              theme_bw()
+ratio_plot_FC1.5 <- ratio_plot_FC1.5 + theme(legend.key.size = unit(0.3, 'cm'))
+pdf(file = paste0("Results/Fig5C.pdf"), width = 3.2, height=1.5)
+ratio_plot_FC1.5
+dev.off()
+
+
+
+## Produce plots for paper (theoretical FC 2)
+ratio_plot_FC2 <- df_res %>% filter(theoretical_FC ==2) %>% 
+              ggplot(.) +
+              geom_vline(xintercept=log2(2), col="black", linetype=2, size=0.4) +
+              geom_density(aes(x=observed_log2FC, col = type, linetype = organism, size=organism, alpha=organism, fill=type)) +
+              scale_fill_manual(values=type_colors) +
+              scale_alpha_manual(values=c(0.3,0.3)) +
+              xlab("Fold Change [log2]") + 
+              scale_linetype_manual(values=c(1,2)) +
+              scale_size_manual(values=c(0.6,0.6)) +
+              scale_color_manual(values=type_colors) +
+              xlim(-0.35,1.5) +
+              theme_bw()
+ratio_plot_FC2 <- ratio_plot_FC2 + theme(legend.key.size = unit(0.3, 'cm'))
+pdf(file = paste0("Results/Fig5D.pdf"), width = 3.2, height=1.5)
+ratio_plot_FC2
+dev.off()
+
+
+
+## Produce plots for paper (theoretical FC inf)
+ratio_plot_FCinf <- df_res %>% filter(theoretical_FC == 1000) %>% 
+              ggplot(.) +
+              geom_density(aes(x=observed_log2FC, col = type, linetype = organism, size=organism, alpha=organism, fill=type)) +
+              scale_fill_manual(values=type_colors) +
+              scale_alpha_manual(values=c(0.3,0.3)) +
+              xlab("Fold Change [log2]") + 
+              scale_linetype_manual(values=c(1,2)) +
+              scale_size_manual(values=c(0.6,0.6)) +
+              scale_color_manual(values=type_colors) +
+              xlim(-0.35,7) +
+              theme_bw()
+pdf(file = paste0("Results/Fig5E.pdf"), width = 3.2, height=1.5)
+ratio_plot_FCinf
+dev.off()
+
+```
+
+
+```{r Perform DE-testing and ROC analyses}
+
+## Relevant variables
+dim(m_uncorr)
+dim(m_EIL)
+dim(m_PPF)
+table(organism)
+groups
+
+
+## Perform roc analysis for theoretical FC 1.33
+roc_uncor_1.33 <- ROC_function(matrix_group1 = log2(m_uncorr[,groups %in% "Group9"]),
+                          matrix_group2 = log2(m_uncorr[,groups %in% "Group12"]),
+                          true_hypothesis = organism == "h")
+roc_eil_1.33 <- ROC_function(matrix_group1 = log2(m_EIL[,groups %in% "Group9"]),
+                          matrix_group2 = log2(m_EIL[,groups %in% "Group12"]),
+                          true_hypothesis = organism == "h")
+roc_ppf_1.33 <- ROC_function(matrix_group1 = log2(m_PPF[,groups %in% "Group9"]),
+                          matrix_group2 = log2(m_PPF[,groups %in% "Group12"]),
+                          true_hypothesis = organism == "h")
+list_roc_1.33 <- list(uncor=roc_uncor_1.33, ppf=roc_ppf_1.33, eil=roc_eil_1.33)
+
+
+## Perform roc analysis for theoretical FC 1.5
+roc_uncor_1.5 <- ROC_function(matrix_group1 = log2(m_uncorr[,groups %in% "Group6"]),
+                          matrix_group2 = log2(m_uncorr[,groups %in% "Group9"]),
+                          true_hypothesis = organism == "h")
+roc_eil_1.5 <- ROC_function(matrix_group1 = log2(m_EIL[,groups %in% "Group6"]),
+                          matrix_group2 = log2(m_EIL[,groups %in% "Group9"]),
+                          true_hypothesis = organism == "h")
+roc_ppf_1.5 <- ROC_function(matrix_group1 = log2(m_PPF[,groups %in% "Group6"]),
+                          matrix_group2 = log2(m_PPF[,groups %in% "Group9"]),
+                          true_hypothesis = organism == "h")
+list_roc_1.5 <- list(uncor=roc_uncor_1.5, ppf=roc_ppf_1.5, eil=roc_eil_1.5)
+
+
+## Perform roc analysis for theoretical FC 2.0
+roc_uncor_2.0 <- ROC_function(matrix_group1 = log2(m_uncorr[,groups %in% "Group6"]),
+                          matrix_group2 = log2(m_uncorr[,groups %in% "Group12"]),
+                          true_hypothesis = organism == "h")
+roc_eil_2.0 <- ROC_function(matrix_group1 = log2(m_EIL[,groups %in% "Group6"]),
+                          matrix_group2 = log2(m_EIL[,groups %in% "Group12"]),
+                          true_hypothesis = organism == "h")
+roc_ppf_2.0 <- ROC_function(matrix_group1 = log2(m_PPF[,groups %in% "Group6"]),
+                          matrix_group2 = log2(m_PPF[,groups %in% "Group12"]),
+                          true_hypothesis = organism == "h")
+list_roc_2.0 <- list(uncor=roc_uncor_2.0, ppf=roc_ppf_2.0, eil=roc_eil_2.0)
+
+
+## Perform roc analysis for theoretical FC inf
+roc_uncor_inf <- ROC_function(matrix_group1 = log2(m_uncorr[,groups %in% "Group0"]),
+                          matrix_group2 = log2(m_uncorr[,groups %in% "Group9"]),
+                          true_hypothesis = organism == "h")
+roc_eil_inf <- ROC_function(matrix_group1 = log2(m_EIL[,groups %in% "Group0"]),
+                          matrix_group2 = log2(m_EIL[,groups %in% "Group9"]),
+                          true_hypothesis = organism == "h")
+roc_ppf_inf <- ROC_function(matrix_group1 = log2(m_PPF[,groups %in% "Group0"]),
+                          matrix_group2 = log2(m_PPF[,groups %in% "Group9"]),
+                          true_hypothesis = organism == "h")
+list_roc_inf <- list(uncor=roc_uncor_inf, ppf=roc_ppf_inf, eil=roc_eil_inf)
+
+```
+
+
+```{r Generate ROC plots}
+
+roc_plot_from_roc(list_roc=list_roc_1.33, type_colors = type_colors, name="1.33")
+roc_plot_from_roc(list_roc = list_roc_1.5, type_colors = type_colors, name="1.5")
+roc_plot_from_roc(list_roc = list_roc_2.0, type_colors = type_colors, name="2.0")
+roc_plot_from_roc(list_roc = list_roc_inf, type_colors = type_colors, name="inf")
+
+```
+
+
+```{r Generate Volcano plots}
+
+
+## create volcano plots 
+volcano_1.33 <- volcano_plot_from_roc(list_roc = list_roc_1.33, 
+                                  type_colors = type_colors,
+                                  theo_yeastFC=1.333,
+                                  x_limit=0.75)
+volcano_1.5 <- volcano_plot_from_roc(list_roc = list_roc_1.5, 
+                                  type_colors = type_colors,
+                                  theo_yeastFC=1.5,
+                                  x_limit=1)
+volcano_2.0 <- volcano_plot_from_roc(list_roc = list_roc_2.0, 
+                                  type_colors = type_colors,
+                                  theo_yeastFC=2.0,
+                                  x_limit=1.5)
+volcano_inf <- volcano_plot_from_roc(list_roc = list_roc_inf, 
+                                  type_colors = type_colors,
+                                  theo_yeastFC=2^7,
+                                  x_limit=7)
+
+
+volcanos_1.33 <- plot_grid(volcano_1.33[[1]],
+                           volcano_1.33[[2]],
+                           volcano_1.33[[3]],
+                           nrow=3)
+volcanos_1.5 <- plot_grid(volcano_1.5[[1]],
+                           volcano_1.5[[2]],
+                           volcano_1.5[[3]],
+                           nrow=3)
+volcanos_2.0 <- plot_grid(volcano_2.0[[1]],
+                           volcano_2.0[[2]],
+                           volcano_2.0[[3]],
+                           nrow=3)
+volcanos_inf <- plot_grid(volcano_inf[[1]],
+                           volcano_inf[[2]],
+                           volcano_inf[[3]],
+                           nrow=3)
+
+
+## merge the three plots to a single plot
+final_volcano <-plot_grid(volcanos_1.33, volcanos_1.5, volcanos_2.0, volcanos_inf, ncol=4)
+pdf("SuppFig7A-D.pdf", height=4.5, width = 7.5)
+final_volcano
+dev.off()
+
+```
+
+
+```{r}
+
+save.image(paste0("Evaluation_session__", Sys.Date(), ".RData"))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

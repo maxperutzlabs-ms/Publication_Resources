@@ -1,0 +1,458 @@
+---
+title: "Aggregate Site table from PSM table"
+author: "Moritz Madern"
+date: "2022-12-14"
+output: html_document
+---
+
+Data input:
+1) modified PSM-table (output of "IM.Rmd" script)
+2) MaxQUant site table
+
+Data output:
+1) modified site table (aggregated from PSMs)
+
+
+This script performs aggregation of PSMs to higher-level site features by a) summation of reporter intensities, b) calculating weighted averages to obtain aggregated EIL values, c) and more (e.g. filtering, aggregating PPF, visualization). 
+Note: This script currently supports MaxQuant output only.
+
+```{r Load required packages etc.}
+
+## Load packages
+library(tidyverse)
+
+
+## Create Results folder
+if (!file.exists("Results")){
+  dir.create("Results")
+}
+
+```
+
+
+```{r Specify required parameters}
+
+## Save working directory
+wd <- getwd()
+
+
+## 1) Parameters specific to the PSM table:
+
+## Specify filepath to PSM table containing: a) reporter ion intensity columns (impurity-corrected and normalized); b) columns providing feature-wise EIL-values (estimated interference level) and PPF-values (precursor purity fraction); a unique id by which other tables (i.e. Site table) refer to it.
+filepath_PSM_table = "Results/PSM.txt"
+
+## Specify reporter ion pattern in PSM table (expected to be impurity corrected and normalized)
+reporter_pattern_PSM = "reporters_[0-9]*(|N|C)_norm$"
+
+## Specify EIL column name in PSM table
+eil_columnname = "EIL"
+
+## Specify PPF column name in PSM table
+ppf_columnname = "PPF"
+
+## Specify min MS2 intensity column name in PSM table
+minIntensity_MS2_columnname = "minIntensity_MS2"
+
+## Specify minimum PPF filter threshold
+ppf_threshold = 0
+
+## Specify the name of the id column by which other tables refer to the PSM table
+id_columnname_PSM_table = "id"
+
+## Specify the name of the column containing the integer number of modifications for the respective PSM precursor peptide
+number_modifications_columname = "Phospho..STY." 
+
+## Specify if remaining NAs in PSMs should be substituted with minimum MS2 intensity
+substitute_NAs_with_min_intensity = FALSE
+
+
+
+
+## 2) Parameters specific to the site table and subsequent filtering of sites:
+
+## Specify filepath to  site table (e.g. acetyl-site table , phospho-site table) that lists features (as rows) of a higher aggregation level than PSMs. In this script, PSMs in the provided PSM table will be aggregated (by summation of PSM reporter ion intensities) to those features. Naturally, this requires the information of which PSMs are allotted to which feature - in MaxQuant, this information is provided by columns like "MSMS IDs". In parallel, the EIL-values will also be aggregated (as the weighted average of the PSMs, where weights are proportional to total PSM reporter ion intensity). On that basis, we can later perform site-to-protein normalization (by another script).
+filepath_feature_table =  "Phospho (STY)Sites.txt"  
+
+## Specify MSMS id column name in the feature table. This column points to the every individual PSM that count to a single feature (separated by ";"). Based on this information, aggregation is performed.
+msms_id_columnname_feature_table = "MS.MS.IDs" 
+
+## Specify minimum site score threshold
+score_threshold_feature_table = 0
+
+## Specify minimum top 3 intensity filter threshold on site-level
+top3_threshold_feature_table = 0
+
+
+```
+
+
+```{r Read in PSM table and derive relevant objects}
+
+## Read in PSM table
+df_PSM <- read.delim(filepath_PSM_table, header=TRUE, sep="\t")
+
+
+## Print the head of PSM reporter intensities (to check if specified pattern is correct!)
+df_PSM[,grepl(names(df_PSM), pattern=reporter_pattern_PSM)] %>% head()
+
+
+## Rename EIL column of PSM table to "EIL"
+names(df_PSM)[names(df_PSM) == eil_columnname] <- "EIL"
+
+
+## Rename PPF column of PSM table to "PPF"
+names(df_PSM)[names(df_PSM) == ppf_columnname] <- "PPF"
+
+
+## Rename minimum MS2 inteisity of PSM table to "minIntensity_MS2"
+names(df_PSM)[names(df_PSM) == minIntensity_MS2_columnname] <- "minIntensity_MS2"
+
+
+## Rename id column name of PSM table to "id"
+names(df_PSM)[names(df_PSM) == id_columnname_PSM_table] <- "id"
+
+
+## Perform additional filtering of PSMs based on PPF
+writeLines(paste0("PSMs before filtering based on PPF: ", nrow(df_PSM)))
+df_PSM <- df_PSM[df_PSM$PPF >= ppf_threshold,]
+writeLines(paste0("\nPSMs after filtering based on PPF: ", nrow(df_PSM)))
+
+
+## print the PPF threshold used for filtering
+writeLines(paste0("\nThe chosen PPF threshold used for filtering: ", ppf_threshold))
+
+```
+
+
+```{r Read in site table and derive relevant objects. Also Filter out reverse and CONs, + based on score. Extract gene names from fasta if empty}
+
+## Read in feature table
+df_feature <- read.delim(filepath_feature_table, header=TRUE, sep="\t")
+
+
+## Filter feature table (assuming it is a MaxQuant output): remove CONs and reverse
+writeLines("Filtering rows based on various criteria. Number of rows:")
+writeLines(paste0("Before filtering anything: ", nrow(df_feature)))
+df_feature <- df_feature[df_feature$Potential.contaminant == "",]
+df_feature <- df_feature[df_feature$Reverse=="",]
+writeLines(paste0("After filtering contaminants and reverse hits: ", nrow(df_feature)))
+
+
+## Filter feature table based on score
+df_feature <- df_feature[df_feature$Score >= score_threshold_feature_table, ]
+writeLines(paste0("After further filtering based on minimum score threshold: ", nrow(df_feature)))
+
+
+## Check gene name column
+writeLines("\nExtracting Gene names from fasta header:")
+writeLines(paste0("Number of Gene name entries that are empty: ", sum(df_feature$Gene.names == "")))
+
+
+## Extract Fasta Headers, and within them, gene names.
+gene_names <- character(nrow(df_feature))        #initialize final vector
+fasta_headers <- df_feature$Fasta.headers
+fasta_headers <- ifelse(substring(fasta_headers, first=1, last=1)==";",
+                          no=fasta_headers, 
+                          yes=substring(fasta_headers, first=regexpr(fasta_headers,pattern="[A-Za-z0-9]"), last=10000))
+fasta_headers_split <- strsplit(fasta_headers, split=";")
+for (i in 1:length(fasta_headers_split)){
+  # in case protein i had a valid entry already, take the original entry
+  if ("Gene.names" %in% names(df_feature) && !df_feature$`Gene.names`[i]== ""){
+    gene_names[i] <- df_feature$Gene.names[i]
+    next()
+  }
+  fasta_headers_split_i <- fasta_headers_split[[i]]
+  if (length(fasta_headers_split_i) > 0 && grepl(fasta_headers_split_i,pattern="GN=")){
+      gene_names_split_i <- substring(fasta_headers_split_i ,first= regexpr(fasta_headers_split_i,pattern="GN=") + 3, last=nchar(fasta_headers_split_i))
+  } else{
+      gene_names_split_i <- substring(fasta_headers_split_i ,first = 1, last=nchar(fasta_headers_split_i))
+  }
+  gene_names_split_i
+  gene_names_split_i <- substring(gene_names_split_i, first=1, last=regexpr(gene_names_split_i, pattern=" |$")-1)
+  gene_names_split_i
+  if(length(gene_names_split_i)>1){
+    gene_names_i <- paste0(gene_names_split_i, collapse=";")
+  } else{
+    gene_names_i <- gene_names_split_i
+  }
+  gene_names[i] <- ifelse(length(gene_names_i)>0, yes=gene_names_i, no="")
+}
+
+## replace old vector with new gene name vector
+df_feature$Gene.names <- gene_names
+writeLines(paste0("Number of Gene name entries that are empty after matching with fasta header: ", sum(df_feature$Gene.names == "")))
+
+```
+
+Note: For each site (=row) in the MaxQuant site table, MaxQuant lists three distinct intensity values per individual reporter ion channel. These correspond to different numbers of modifications per MaxQuant site. Sometimes, a site shows intensities in in more than one of these channel types. For example, in a TMT10plex experiment, a MaxQuant site would list 20 intensity values in total; 10 for singly modified peptides, and another 10 for doubly modified peptides. However, we would like to split them and analyse them separately. The following code block separates these values and extends the site table accordingly, making room for additional site/row entries, each of them having exactly 1 intensity value per channel. Please note that this code does not account for changes in MaxQUant's column name denotation. Adapt the regular expression patterns accordingly if neccessary! Also note that sites with equall to or more than 3 modifications will all be pooled to a single class labeled "3".
+
+```{r Split the site table based on number of modifications, then report table of number of modifications per site (this is a MaxQuant characteristic in the stite table)}
+
+## Extract meta table. Delete any remaining Intensity column (else there would be duplicates after this code block)
+df_meta <- df_feature[,!grepl(names(df_feature), pattern="___")]
+df_meta <- df_meta[,!grepl(names(df_meta), pattern="Intensity")]
+
+
+## split into 3 parts based on the ending of columns
+df_1 <- df_feature[,grepl(names(df_feature), pattern="___1")] %>% cbind(df_meta,.)
+df_2 <- df_feature[,grepl(names(df_feature), pattern="___2")] %>% cbind(df_meta,.)
+df_3 <- df_feature[,grepl(names(df_feature), pattern="___3")] %>% cbind(df_meta,.)
+
+
+## add an extra column denoting the number of modifications
+df_1 <- cbind(df_1, data.frame(number_modifications = 1))
+df_2 <- cbind(df_2, data.frame(number_modifications = 2))
+df_3 <- cbind(df_3, data.frame(number_modifications = 3))
+
+
+## get rid of class pattern "___[1-3]" in column names
+names(df_1) <- sub(names(df_1), pattern="___1", replacement = "")
+names(df_2) <- sub(names(df_2), pattern="___2", replacement = "")
+names(df_3) <- sub(names(df_3), pattern="___3", replacement = "")
+
+
+## Rowbind the three dataframes into a single dataframe
+df_feature <- rbind(df_1, df_2, df_3)
+
+
+## Filter out rows completely empty in reporter intensity columns, then report number of sites again
+m_feature <- df_feature[,grepl(names(df_feature), pattern="Reporter[.]intensity")] %>% as.matrix()
+bool_keep <- apply(m_feature!=0, MARGIN = 1, FUN=any)
+df_feature <- df_feature[bool_keep,]
+
+## Report the number of sites after splitting
+writeLines("Number of features (rows) after splitting: ")
+print(nrow(df_feature))
+
+## Overview of number of modifications per site
+barplot(table(df_feature$number_modifications), border="grey", col="grey", ylab="frequency", xlab="number of modifications")
+
+```
+
+```{r Perform aggregation of reporter ion intensities and EIL values from PSM-table to site table based on ID reference columns}
+
+## Extract msms id column in feature table
+msms_id_pointer <- df_feature[,msms_id_columnname_feature_table]
+
+
+## Extract number of modification column in feature table
+number_modifications <- df_feature$number_modifications
+
+
+## Initiate aggregated reporter intensity matrix
+m_agg_reporterInt <- matrix(numeric(1),
+                            ncol=sum(grepl(names(df_PSM), pattern=reporter_pattern_PSM)),  # number of reporter ion columns in PSM-table
+                            nrow=nrow(df_feature))
+colnames(m_agg_reporterInt) <- paste0(grep(names(df_PSM), pattern=reporter_pattern_PSM, value = TRUE), "__aggregated")
+ 
+
+## Initiate aggregated EIL vector and PPF vector
+v_agg_eil <- numeric(nrow(df_feature))
+v_agg_ppf <- numeric(nrow(df_feature))
+v_agg_minIntensity_MS2 <- numeric(nrow(df_feature))
+
+
+## Initiate vector indicating whether PSMs for the respective site could be found in the PSM table
+v_agg_control <- rep("+", times=nrow(df_feature))
+
+
+## Go over each site i in df_feature and aggregate their reporter intensities + EIL values  + PPF values from the PSM-table
+for (i in 1:nrow(df_feature)){
+  
+  # extract corresponding PSM ids
+  psm_ids_i <- msms_id_pointer[i]
+  
+  # extract corresponding number of modifications 
+  number_modifications_i <- number_modifications[i]
+  
+  # split them at ";"
+  psm_ids_i <- strsplit(psm_ids_i, split=";")[[1]]
+  
+  # check if the feature really points to PSMs in the PSM-table
+  df_PSM_i <- df_PSM[df_PSM$id %in% psm_ids_i,]
+  if (nrow(df_PSM_i)==0){ 
+    v_agg_control[i] <- "-"
+    next()
+  }
+  
+  # further check if at least 1 PSM matches the site's number of modifications 
+  bool_match <- pmin(df_PSM_i[,number_modifications_columname],3) %in% number_modifications_i  # larger than 3 will be classified as 3
+  if (!any(bool_match)){
+    v_agg_control[i] <- "-"
+    next()
+  } else {
+    df_PSM_i <- df_PSM_i[bool_match,]
+  }
+  
+  # extract reporter intensity columns
+  m_PSM_i <- df_PSM_i[,grepl(names(df_PSM_i), pattern=reporter_pattern_PSM)] %>% as.matrix(.)
+  
+  # substitute 0s with NAs
+  m_PSM_i[m_PSM_i==0] <- NA
+  
+  # calculate rowSums to infer weights in EIL aggregation + PPF aggregation
+  rowsums_i <- rowSums(m_PSM_i, na.rm=TRUE)
+  weights_i <- rowsums_i/sum(rowsums_i)
+  
+  # aggregate EIL and PPF
+  v_agg_eil[i] <- sum(weights_i * df_PSM_i$EIL)
+  v_agg_ppf[i] <- sum(weights_i * df_PSM_i$PPF)
+  v_agg_minIntensity_MS2[i] <- sum(df_PSM_i$minIntensity_MS2)
+  
+  # substitute NAs and zeros with minimum intensity in MS2 scan if specified
+  if (substitute_NAs_with_min_intensity){
+    for (j in 1:nrow(m_PSM_i)){
+      row_j <- m_PSM_i[j,]
+      min_j <- df_PSM_i[j,minIntensity_MS2_columnname]
+      row_j[is.na(row_j) | row_j == 0] <- min_j
+      m_PSM_i[j,] <- row_j
+    }
+  }
+  
+  # calculate column sums (i.e. aggregation from PSMs to feature by summation)
+  m_agg_reporterInt[i,] <- colSums(m_PSM_i, na.rm = TRUE)
+}
+
+
+## merge the results to df_PSM
+df_feature <- cbind(df_feature, m_agg_reporterInt)
+df_feature$EIL <- v_agg_eil
+df_feature$PPF <- v_agg_ppf
+df_feature$summed_minIntensity_MS2 <- v_agg_minIntensity_MS2
+df_feature$agg_control <- v_agg_control
+
+```
+
+
+```{r Filter out features coming from previously filtered PSMs }
+
+## Note: This step filters out sites that wholly derive from PSMs which have previously been filtered out in the PSM table (due to, for example: 0 isobaric labels (i.e. unlabeled); second peptides; insufficient PPF, insufficient valid values per Group)
+
+
+## get an overview of how much is filtered out
+barplot(table(df_feature$agg_control), border="grey", col="grey", ylab = "frequency", xlab="passed filter", main="Overview of filtering")
+
+
+## perform filtering
+writeLines(paste0("Before integrating PSM-filters: ", nrow(df_feature)))
+df_feature <- df_feature[df_feature$agg_control == "+",]
+writeLines(paste0("After integrating PSM-filters: ", nrow(df_feature)))
+
+```
+
+```{r Filter out features that do not pass a minimum average top3 intensity threshold}
+
+## Extract aggregated intensities
+m_aggregated <- df_feature[,grepl(names(df_feature), pattern="aggregated")] %>% as.matrix()
+
+
+## calculate average top 3 intensity per feature
+mean_top3 <- apply(m_aggregated, MARGIN = 1, FUN=function(x){
+                                  x_sort <- sort(x, decreasing = TRUE)
+                                  if(length(x_sort)>=3){
+                                    res <- mean(x_sort[1:3])
+                                  } else{
+                                    res <- mean(x_sort[1:length(x_sort)])
+                                  }
+                                  return(res)
+                                  })
+
+
+## filter out sites below average top3 threshold
+hist(log2(mean_top3), breaks=100, border="grey", col="grey", main="distribution of average top3 log2 intensities")
+abline(v=log2(top3_threshold_feature_table), col="red", lty="dashed", lwd=2)
+bool_keep <- mean_top3 >= top3_threshold_feature_table
+writeLines(paste0("Number of sites after applying average top3 filter threshold: ", nrow(df_feature)))
+df_feature <- df_feature[bool_keep,]
+writeLines(paste0("\nNumber of sites after applying average top3 filter threshold: ", nrow(df_feature)))
+writeLines(paste0("Chosen average top3 intensity threshold for filtering: ", top3_threshold_feature_table))
+
+```
+
+
+```{r Export results}
+
+## If no specifc output name was given, name resulting table based on input file's name
+ind_substring <- rev(unlist(gregexpr(filepath_feature_table, pattern="[\\]|[/]")))[1]
+outputname_path <- paste0("Results/aggregated_",substring(filepath_feature_table, first = ind_substring + 1, last=nchar(filepath_feature_table))) 
+
+
+## Generate output table
+write.table(df_feature, file = outputname_path, sep = "\t", col.names = TRUE, row.names=FALSE, quote=FALSE)
+
+
+## Report about the export
+writeLines("The result table can be found in:")
+print(outputname_path)
+
+```
+
+
+```{r SPECIAL: create plots for paper}
+
+## Extract yeast features
+df_feature$Fasta.headers[1:10]
+bool_yeast <- grepl(df_feature$Fasta.headers, pattern="YEAST") & !grepl(df_feature$Fasta.headers, pattern="HUMAN")
+df_sites_yeast <- df_feature[bool_yeast,]
+
+
+## Calculate OIL
+groups <- c("Group0", "Group6", "Group0", "Group6", "Group0", "Group6", "Group9", "Group12", "Group9","Group12", "Group9", "Group12")
+m_reporters_yeast <- df_sites_yeast[,grepl(names(df_sites_yeast), pattern="aggregated")]
+barplot(colSums(m_reporters_yeast, na.rm=TRUE))
+df_sites_yeast$OIL <-  pmin(apply(m_reporters_yeast[,groups %in% c("Group0")], FUN=mean, MARGIN=1, na.rm=TRUE)/apply(m_reporters_yeast[,groups %in% c("Group6", "Group9", "Group12")], FUN=mean, MARGIN=1, na.rm=TRUE), 1)
+
+
+## Calculate densities for plots
+get_density <- function(x, y, ...){
+  dens <- MASS::kde2d(x, y, ...)
+  ix <- findInterval(x, dens$x)
+  iy <- findInterval(y, dens$y)
+  ii <- cbind(ix, iy)
+  return(dens$z[ii])
+}
+df_sites_yeast$eil_density <- get_density(y=df_sites_yeast$OIL, x=df_sites_yeast$EIL, n=1000)
+df_sites_yeast$ppf_density <- get_density(y=df_sites_yeast$OIL, x = 1 - df_sites_yeast$PPF, n=1000)
+
+
+
+
+gg_ppf <- df_sites_yeast %>%
+          ggplot(.) + 
+          geom_abline(intercept = 0, slope=1, col="black", cex=0.5, linetype=2) +
+          geom_point(aes(y=OIL, x=1-PPF, color=ppf_density), alpha=1, cex=1.5)
+
+
+## create plots for paper
+gg_ppf <- df_sites_yeast %>%
+          ggplot(.) + 
+          geom_abline(intercept = 0, slope=1, col="black", cex=0.5, linetype=2) +
+          geom_point(aes(y=OIL, x=1-PPF, color=ppf_density), alpha=1, cex=1.5) +
+          scale_color_gradientn(colors=pals::parula(20))+ 
+          theme(legend.position=c(-0.3,0.5)) +
+          coord_cartesian(xlim=c(0,1),ylim=c(0,1)) +
+          labs(y="Observed Interference Level") + labs(x="1 - Precursor Purity Fraction") +
+          theme_bw()
+gg_eil <- df_sites_yeast %>%
+          ggplot(.) + 
+          geom_abline(intercept = 0, slope=1, col="black", cex=0.5, linetype=2) +
+          geom_point(aes(y=OIL, x=EIL, color=eil_density), alpha=1, cex=1.5) +
+          scale_color_gradientn(colors=pals::parula(20))+ 
+          theme(legend.position=c(-0.3,0.5)) +
+          coord_cartesian(xlim=c(0,1),ylim=c(0,1)) +
+          labs(y="Observed Interference Level") + labs(x="Estimated Interference Level") +
+          theme_bw()
+pdf("SupFig6E.pdf",width=3.8, height=5)
+plot_grid(gg_ppf,gg_eil,  nrow=2)
+dev.off()
+
+```
+
+
+
+```{r}
+
+```
+
+
+
