@@ -1,0 +1,119 @@
+Data dtypes:
+  Adjusted p-value GFP_Atg8_untreated vs Ctrl_untreated: float64
+  Average expression GFP_Atg8_untreated vs Ctrl_untreated: float64
+  Events Ctrl_untreated: int64
+  Events GFP_Atg8_untreated: int64
+  Events total: int64
+  Expression Ctrl_untreated: float64
+  Expression Ctrl_untreated_1: float64
+  Expression Ctrl_untreated_2: float64
+  Expression Ctrl_untreated_3: float64
+  Expression GFP_Atg8_untreated: float64
+  Expression GFP_Atg8_untreated_1: float64
+  Expression GFP_Atg8_untreated_2: float64
+  Expression GFP_Atg8_untreated_3: float64
+  Fasta header: object
+  Gene name: object
+  Indistinguishable Proteins: object
+  Intensity Ctrl_untreated_1: float64
+  Intensity Ctrl_untreated_2: float64
+  Intensity Ctrl_untreated_3: float64
+  Intensity GFP_Atg8_untreated_1: float64
+  Intensity GFP_Atg8_untreated_2: float64
+  Intensity GFP_Atg8_untreated_3: float64
+  LFQ intensity Ctrl_untreated_1: float64
+  LFQ intensity Ctrl_untreated_2: float64
+  LFQ intensity Ctrl_untreated_3: float64
+  LFQ intensity GFP_Atg8_untreated_1: float64
+  LFQ intensity GFP_Atg8_untreated_2: float64
+  LFQ intensity GFP_Atg8_untreated_3: float64
+  Leading potential contaminants: object
+  Leading proteins: object
+  Missing Ctrl_untreated: int64
+  Missing Ctrl_untreated_1: bool
+  Missing Ctrl_untreated_2: bool
+  Missing Ctrl_untreated_3: bool
+  Missing GFP_Atg8_untreated: int64
+  Missing GFP_Atg8_untreated_1: bool
+  Missing GFP_Atg8_untreated_2: bool
+  Missing GFP_Atg8_untreated_3: bool
+  Missing total: int64
+  Molecular weight [kDa]: float64
+  Organism: object
+  P-value GFP_Atg8_untreated vs Ctrl_untreated: float64
+  Potential contaminant: bool
+  Protein: object
+  Protein Existence: object
+  Protein ID: object
+  Protein Probability: float64
+  Protein entry name: object
+  Protein length: int64
+  Protein name: object
+  Protein reported by software: object
+  Ratio [log2] GFP_Atg8_untreated vs Ctrl_untreated: float64
+  Representative protein: object
+  Sequence coverage: float64
+  Spectral count Combined: int64
+  Spectral count Ctrl_untreated_1: int64
+  Spectral count Ctrl_untreated_2: int64
+  Spectral count Ctrl_untreated_3: int64
+  Spectral count GFP_Atg8_untreated_1: int64
+  Spectral count GFP_Atg8_untreated_2: int64
+  Spectral count GFP_Atg8_untreated_3: int64
+  Top Peptide Probability: float64
+  Total peptides: int64
+  Total spectral count Combined: int64
+  Total spectral count Ctrl_untreated_1: int64
+  Total spectral count Ctrl_untreated_2: int64
+  Total spectral count Ctrl_untreated_3: int64
+  Total spectral count GFP_Atg8_untreated_1: int64
+  Total spectral count GFP_Atg8_untreated_2: int64
+  Total spectral count GFP_Atg8_untreated_3: int64
+  Unique spectral count Combined: int64
+  Unique spectral count Ctrl_untreated_1: int64
+  Unique spectral count Ctrl_untreated_2: int64
+  Unique spectral count Ctrl_untreated_3: int64
+  Unique spectral count GFP_Atg8_untreated_1: int64
+  Unique spectral count GFP_Atg8_untreated_2: int64
+  Unique spectral count GFP_Atg8_untreated_3: int64
+  Valid: bool
+  iBAQ intensity Ctrl_untreated_1: float64
+  iBAQ intensity Ctrl_untreated_2: float64
+  iBAQ intensity Ctrl_untreated_3: float64
+  iBAQ intensity GFP_Atg8_untreated_1: float64
+  iBAQ intensity GFP_Atg8_untreated_2: float64
+  iBAQ intensity GFP_Atg8_untreated_3: float64
+  iBAQ peptides: int64
+Expression columns:
+- Expression Ctrl_untreated_1
+- Expression Ctrl_untreated_2
+- Expression Ctrl_untreated_3
+- Expression GFP_Atg8_untreated_1
+- Expression GFP_Atg8_untreated_2
+- Expression GFP_Atg8_untreated_3
+Expression features:
+- Missing total
+- Missing Ctrl_untreated
+- Missing GFP_Atg8_untreated
+- Missing Ctrl_untreated_1
+- Missing Ctrl_untreated_2
+- Missing Ctrl_untreated_3
+- Missing GFP_Atg8_untreated_1
+- Missing GFP_Atg8_untreated_2
+- Missing GFP_Atg8_untreated_3
+- Events Ctrl_untreated
+- Events GFP_Atg8_untreated
+- Events total
+- Expression Ctrl_untreated
+- Expression GFP_Atg8_untreated
+- Adjusted p-value GFP_Atg8_untreated vs Ctrl_untreated
+- Average expression GFP_Atg8_untreated vs Ctrl_untreated
+- P-value GFP_Atg8_untreated vs Ctrl_untreated
+- Ratio [log2] GFP_Atg8_untreated vs Ctrl_untreated
+Expression sample mapping:
+  Expression Ctrl_untreated_1: Ctrl_untreated_1
+  Expression Ctrl_untreated_2: Ctrl_untreated_2
+  Expression Ctrl_untreated_3: Ctrl_untreated_3
+  Expression GFP_Atg8_untreated_1: GFP_Atg8_untreated_1
+  Expression GFP_Atg8_untreated_2: GFP_Atg8_untreated_2
+  Expression GFP_Atg8_untreated_3: GFP_Atg8_untreated_3

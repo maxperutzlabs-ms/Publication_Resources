@@ -1,0 +1,173 @@
+Data dtypes:
+  Events Acetylation 0nM: int64
+  Events Acetylation 1000nM: int64
+  Events Acetylation 100nM: int64
+  Events Acetylation 5000nM: int64
+  Events Acetylation 500nM: int64
+  Events total: int64
+  Expression Acetylation 0nM: float64
+  Expression Acetylation 1000nM: float64
+  Expression Acetylation 100nM: float64
+  Expression Acetylation 5000nM: float64
+  Expression Acetylation 500nM: float64
+  Expression Strp_beads_NHS_Ac_0nM_1: float64
+  Expression Strp_beads_NHS_Ac_0nM_2: float64
+  Expression Strp_beads_NHS_Ac_1000nM_1: float64
+  Expression Strp_beads_NHS_Ac_1000nM_2: float64
+  Expression Strp_beads_NHS_Ac_100nM_1: float64
+  Expression Strp_beads_NHS_Ac_100nM_2: float64
+  Expression Strp_beads_NHS_Ac_5000nM_1: float64
+  Expression Strp_beads_NHS_Ac_5000nM_2: float64
+  Expression Strp_beads_NHS_Ac_500nM_1: float64
+  Expression Strp_beads_NHS_Ac_500nM_2: float64
+  Fasta header: object
+  Gene name: object
+  Indistinguishable Proteins: object
+  Intensity Strp_beads_NHS_Ac_0nM_1: float64
+  Intensity Strp_beads_NHS_Ac_0nM_2: float64
+  Intensity Strp_beads_NHS_Ac_1000nM_1: float64
+  Intensity Strp_beads_NHS_Ac_1000nM_2: float64
+  Intensity Strp_beads_NHS_Ac_100nM_1: float64
+  Intensity Strp_beads_NHS_Ac_100nM_2: float64
+  Intensity Strp_beads_NHS_Ac_5000nM_1: float64
+  Intensity Strp_beads_NHS_Ac_5000nM_2: float64
+  Intensity Strp_beads_NHS_Ac_500nM_1: float64
+  Intensity Strp_beads_NHS_Ac_500nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_0nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_0nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_1000nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_1000nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_100nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_100nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_5000nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_5000nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_500nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_500nM_2: float64
+  Leading potential contaminants: object
+  Leading proteins: object
+  Missing Acetylation 0nM: int64
+  Missing Acetylation 1000nM: int64
+  Missing Acetylation 100nM: int64
+  Missing Acetylation 5000nM: int64
+  Missing Acetylation 500nM: int64
+  Missing Strp_beads_NHS_Ac_0nM_1: bool
+  Missing Strp_beads_NHS_Ac_0nM_2: bool
+  Missing Strp_beads_NHS_Ac_1000nM_1: bool
+  Missing Strp_beads_NHS_Ac_1000nM_2: bool
+  Missing Strp_beads_NHS_Ac_100nM_1: bool
+  Missing Strp_beads_NHS_Ac_100nM_2: bool
+  Missing Strp_beads_NHS_Ac_5000nM_1: bool
+  Missing Strp_beads_NHS_Ac_5000nM_2: bool
+  Missing Strp_beads_NHS_Ac_500nM_1: bool
+  Missing Strp_beads_NHS_Ac_500nM_2: bool
+  Missing total: int64
+  Molecular weight [kDa]: float64
+  Organism: object
+  Potential contaminant: bool
+  Protein: object
+  Protein Existence: object
+  Protein ID: object
+  Protein Probability: float64
+  Protein entry name: object
+  Protein length: int64
+  Protein name: object
+  Protein reported by software: object
+  Representative protein: object
+  Sequence coverage: float64
+  Spectral count Combined: int64
+  Spectral count Strp_beads_NHS_Ac_0nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_0nM_2: int64
+  Spectral count Strp_beads_NHS_Ac_1000nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_1000nM_2: int64
+  Spectral count Strp_beads_NHS_Ac_100nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_100nM_2: int64
+  Spectral count Strp_beads_NHS_Ac_5000nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_5000nM_2: int64
+  Spectral count Strp_beads_NHS_Ac_500nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_500nM_2: int64
+  Top Peptide Probability: float64
+  Total peptides: int64
+  Total spectral count Combined: int64
+  Total spectral count Strp_beads_NHS_Ac_0nM_1: int64
+  Total spectral count Strp_beads_NHS_Ac_0nM_2: int64
+  Total spectral count Strp_beads_NHS_Ac_1000nM_1: int64
+  Total spectral count Strp_beads_NHS_Ac_1000nM_2: int64
+  Total spectral count Strp_beads_NHS_Ac_100nM_1: int64
+  Total spectral count Strp_beads_NHS_Ac_100nM_2: int64
+  Total spectral count Strp_beads_NHS_Ac_5000nM_1: int64
+  Total spectral count Strp_beads_NHS_Ac_5000nM_2: int64
+  Total spectral count Strp_beads_NHS_Ac_500nM_1: int64
+  Total spectral count Strp_beads_NHS_Ac_500nM_2: int64
+  Unique spectral count Combined: int64
+  Unique spectral count Strp_beads_NHS_Ac_0nM_1: int64
+  Unique spectral count Strp_beads_NHS_Ac_0nM_2: int64
+  Unique spectral count Strp_beads_NHS_Ac_1000nM_1: int64
+  Unique spectral count Strp_beads_NHS_Ac_1000nM_2: int64
+  Unique spectral count Strp_beads_NHS_Ac_100nM_1: int64
+  Unique spectral count Strp_beads_NHS_Ac_100nM_2: int64
+  Unique spectral count Strp_beads_NHS_Ac_5000nM_1: int64
+  Unique spectral count Strp_beads_NHS_Ac_5000nM_2: int64
+  Unique spectral count Strp_beads_NHS_Ac_500nM_1: int64
+  Unique spectral count Strp_beads_NHS_Ac_500nM_2: int64
+  Valid: bool
+  iBAQ intensity Strp_beads_NHS_Ac_0nM_1: float64
+  iBAQ intensity Strp_beads_NHS_Ac_0nM_2: float64
+  iBAQ intensity Strp_beads_NHS_Ac_1000nM_1: float64
+  iBAQ intensity Strp_beads_NHS_Ac_1000nM_2: float64
+  iBAQ intensity Strp_beads_NHS_Ac_100nM_1: float64
+  iBAQ intensity Strp_beads_NHS_Ac_100nM_2: float64
+  iBAQ intensity Strp_beads_NHS_Ac_5000nM_1: float64
+  iBAQ intensity Strp_beads_NHS_Ac_5000nM_2: float64
+  iBAQ intensity Strp_beads_NHS_Ac_500nM_1: float64
+  iBAQ intensity Strp_beads_NHS_Ac_500nM_2: float64
+  iBAQ peptides: int64
+Expression columns:
+- Expression Strp_beads_NHS_Ac_0nM_1
+- Expression Strp_beads_NHS_Ac_0nM_2
+- Expression Strp_beads_NHS_Ac_1000nM_1
+- Expression Strp_beads_NHS_Ac_1000nM_2
+- Expression Strp_beads_NHS_Ac_100nM_1
+- Expression Strp_beads_NHS_Ac_100nM_2
+- Expression Strp_beads_NHS_Ac_5000nM_1
+- Expression Strp_beads_NHS_Ac_5000nM_2
+- Expression Strp_beads_NHS_Ac_500nM_1
+- Expression Strp_beads_NHS_Ac_500nM_2
+Expression features:
+- Missing total
+- Missing Acetylation 0nM
+- Missing Acetylation 100nM
+- Missing Acetylation 500nM
+- Missing Acetylation 1000nM
+- Missing Acetylation 5000nM
+- Missing Strp_beads_NHS_Ac_0nM_1
+- Missing Strp_beads_NHS_Ac_0nM_2
+- Missing Strp_beads_NHS_Ac_100nM_1
+- Missing Strp_beads_NHS_Ac_100nM_2
+- Missing Strp_beads_NHS_Ac_500nM_1
+- Missing Strp_beads_NHS_Ac_500nM_2
+- Missing Strp_beads_NHS_Ac_1000nM_1
+- Missing Strp_beads_NHS_Ac_1000nM_2
+- Missing Strp_beads_NHS_Ac_5000nM_1
+- Missing Strp_beads_NHS_Ac_5000nM_2
+- Events Acetylation 0nM
+- Events Acetylation 1000nM
+- Events Acetylation 100nM
+- Events Acetylation 5000nM
+- Events Acetylation 500nM
+- Events total
+- Expression Acetylation 0nM
+- Expression Acetylation 1000nM
+- Expression Acetylation 100nM
+- Expression Acetylation 5000nM
+- Expression Acetylation 500nM
+Expression sample mapping:
+  Expression Strp_beads_NHS_Ac_0nM_1: Strp_beads_NHS_Ac_0nM_1
+  Expression Strp_beads_NHS_Ac_0nM_2: Strp_beads_NHS_Ac_0nM_2
+  Expression Strp_beads_NHS_Ac_1000nM_1: Strp_beads_NHS_Ac_1000nM_1
+  Expression Strp_beads_NHS_Ac_1000nM_2: Strp_beads_NHS_Ac_1000nM_2
+  Expression Strp_beads_NHS_Ac_100nM_1: Strp_beads_NHS_Ac_100nM_1
+  Expression Strp_beads_NHS_Ac_100nM_2: Strp_beads_NHS_Ac_100nM_2
+  Expression Strp_beads_NHS_Ac_5000nM_1: Strp_beads_NHS_Ac_5000nM_1
+  Expression Strp_beads_NHS_Ac_5000nM_2: Strp_beads_NHS_Ac_5000nM_2
+  Expression Strp_beads_NHS_Ac_500nM_1: Strp_beads_NHS_Ac_500nM_1
+  Expression Strp_beads_NHS_Ac_500nM_2: Strp_beads_NHS_Ac_500nM_2
