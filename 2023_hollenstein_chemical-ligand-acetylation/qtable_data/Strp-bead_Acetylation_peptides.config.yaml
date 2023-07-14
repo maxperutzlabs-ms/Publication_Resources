@@ -1,0 +1,91 @@
+Data dtypes:
+  Charges: object
+  End position: int64
+  Expression Acetylation 0nM: float64
+  Expression Acetylation 1000nM: float64
+  Expression Acetylation 100nM: float64
+  Expression Acetylation 5000nM: float64
+  Expression Acetylation 500nM: float64
+  Expression Strp_beads_NHS_Ac_0nM_1: float64
+  Expression Strp_beads_NHS_Ac_0nM_2: float64
+  Expression Strp_beads_NHS_Ac_1000nM_1: float64
+  Expression Strp_beads_NHS_Ac_1000nM_2: float64
+  Expression Strp_beads_NHS_Ac_100nM_1: float64
+  Expression Strp_beads_NHS_Ac_100nM_2: float64
+  Expression Strp_beads_NHS_Ac_5000nM_1: float64
+  Expression Strp_beads_NHS_Ac_5000nM_2: float64
+  Expression Strp_beads_NHS_Ac_500nM_1: float64
+  Expression Strp_beads_NHS_Ac_500nM_2: float64
+  Gene name: object
+  Intensity Strp_beads_NHS_Ac_0nM_1: float64
+  Intensity Strp_beads_NHS_Ac_0nM_2: float64
+  Intensity Strp_beads_NHS_Ac_1000nM_1: float64
+  Intensity Strp_beads_NHS_Ac_1000nM_2: float64
+  Intensity Strp_beads_NHS_Ac_100nM_1: float64
+  Intensity Strp_beads_NHS_Ac_100nM_2: float64
+  Intensity Strp_beads_NHS_Ac_5000nM_1: float64
+  Intensity Strp_beads_NHS_Ac_5000nM_2: float64
+  Intensity Strp_beads_NHS_Ac_500nM_1: float64
+  Intensity Strp_beads_NHS_Ac_500nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_0nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_0nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_1000nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_1000nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_100nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_100nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_5000nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_5000nM_2: float64
+  LFQ intensity Strp_beads_NHS_Ac_500nM_1: float64
+  LFQ intensity Strp_beads_NHS_Ac_500nM_2: float64
+  Mapped Genes: object
+  Mapped Proteins: object
+  Next AA: object
+  Peptide Length: int64
+  Peptide sequence: object
+  Prev AA: object
+  Protein: object
+  Protein Description: object
+  Protein ID: object
+  Protein entry name: object
+  Protein reported by software: object
+  Representative protein: object
+  Spectral count Strp_beads_NHS_Ac_0nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_0nM_2: int64
+  Spectral count Strp_beads_NHS_Ac_1000nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_1000nM_2: int64
+  Spectral count Strp_beads_NHS_Ac_100nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_100nM_2: int64
+  Spectral count Strp_beads_NHS_Ac_5000nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_5000nM_2: int64
+  Spectral count Strp_beads_NHS_Ac_500nM_1: int64
+  Spectral count Strp_beads_NHS_Ac_500nM_2: int64
+  Start position: int64
+  Valid: bool
+Expression columns:
+- Expression Strp_beads_NHS_Ac_0nM_1
+- Expression Strp_beads_NHS_Ac_0nM_2
+- Expression Strp_beads_NHS_Ac_1000nM_1
+- Expression Strp_beads_NHS_Ac_1000nM_2
+- Expression Strp_beads_NHS_Ac_100nM_1
+- Expression Strp_beads_NHS_Ac_100nM_2
+- Expression Strp_beads_NHS_Ac_5000nM_1
+- Expression Strp_beads_NHS_Ac_5000nM_2
+- Expression Strp_beads_NHS_Ac_500nM_1
+- Expression Strp_beads_NHS_Ac_500nM_2
+Expression features:
+- Expression Acetylation 0nM
+- Expression Acetylation 100nM
+- Expression Acetylation 500nM
+- Expression Acetylation 1000nM
+- Expression Acetylation 5000nM
+Expression sample mapping:
+  Expression Strp_beads_NHS_Ac_0nM_1: Strp_beads_NHS_Ac_0nM_1
+  Expression Strp_beads_NHS_Ac_0nM_2: Strp_beads_NHS_Ac_0nM_2
+  Expression Strp_beads_NHS_Ac_1000nM_1: Strp_beads_NHS_Ac_1000nM_1
+  Expression Strp_beads_NHS_Ac_1000nM_2: Strp_beads_NHS_Ac_1000nM_2
+  Expression Strp_beads_NHS_Ac_100nM_1: Strp_beads_NHS_Ac_100nM_1
+  Expression Strp_beads_NHS_Ac_100nM_2: Strp_beads_NHS_Ac_100nM_2
+  Expression Strp_beads_NHS_Ac_5000nM_1: Strp_beads_NHS_Ac_5000nM_1
+  Expression Strp_beads_NHS_Ac_5000nM_2: Strp_beads_NHS_Ac_5000nM_2
+  Expression Strp_beads_NHS_Ac_500nM_1: Strp_beads_NHS_Ac_500nM_1
+  Expression Strp_beads_NHS_Ac_500nM_2: Strp_beads_NHS_Ac_500nM_2

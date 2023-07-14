@@ -1,0 +1,45 @@
+Data dtypes:
+  Events GFP_Atg8: int64
+  Events total: int64
+  Expression GFP_Atg8: float64
+  Fasta header: object
+  Gene name: object
+  Indistinguishable Proteins: object
+  Intensity GFP_Atg8: float64
+  Leading potential contaminants: object
+  Leading proteins: object
+  Missing GFP_Atg8: bool
+  Missing total: int64
+  Molecular weight [kDa]: float64
+  Organism: object
+  Potential contaminant: bool
+  Protein: object
+  Protein Existence: object
+  Protein ID: object
+  Protein Probability: float64
+  Protein entry name: object
+  Protein length: int64
+  Protein name: object
+  Protein reported by software: object
+  Representative protein: object
+  Sequence coverage: float64
+  Spectral count Combined: int64
+  Spectral count GFP_Atg8: int64
+  Top Peptide Probability: float64
+  Total peptides: int64
+  Total spectral count Combined: int64
+  Total spectral count GFP_Atg8: int64
+  Unique spectral count Combined: int64
+  Unique spectral count GFP_Atg8: int64
+  Valid: bool
+  iBAQ intensity GFP_Atg8: float64
+  iBAQ peptides: int64
+Expression columns:
+- Expression GFP_Atg8
+Expression features:
+- Missing total
+- Missing GFP_Atg8
+- Events GFP_Atg8
+- Events total
+Expression sample mapping:
+  Expression GFP_Atg8: GFP_Atg8

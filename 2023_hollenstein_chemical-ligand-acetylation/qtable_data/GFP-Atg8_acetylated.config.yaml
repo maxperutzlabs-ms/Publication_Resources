@@ -1,0 +1,119 @@
+Data dtypes:
+  Adjusted p-value GFP_Atg8_acetylated vs Ctrl_acetylated: float64
+  Average expression GFP_Atg8_acetylated vs Ctrl_acetylated: float64
+  Events Ctrl_acetylated: int64
+  Events GFP_Atg8_acetylated: int64
+  Events total: int64
+  Expression Ctrl_acetylated: float64
+  Expression Ctrl_acetylated_1: float64
+  Expression Ctrl_acetylated_2: float64
+  Expression Ctrl_acetylated_3: float64
+  Expression GFP_Atg8_acetylated: float64
+  Expression GFP_Atg8_acetylated_1: float64
+  Expression GFP_Atg8_acetylated_2: float64
+  Expression GFP_Atg8_acetylated_3: float64
+  Fasta header: object
+  Gene name: object
+  Indistinguishable Proteins: object
+  Intensity Ctrl_acetylated_1: float64
+  Intensity Ctrl_acetylated_2: float64
+  Intensity Ctrl_acetylated_3: float64
+  Intensity GFP_Atg8_acetylated_1: float64
+  Intensity GFP_Atg8_acetylated_2: float64
+  Intensity GFP_Atg8_acetylated_3: float64
+  LFQ intensity Ctrl_acetylated_1: float64
+  LFQ intensity Ctrl_acetylated_2: float64
+  LFQ intensity Ctrl_acetylated_3: float64
+  LFQ intensity GFP_Atg8_acetylated_1: float64
+  LFQ intensity GFP_Atg8_acetylated_2: float64
+  LFQ intensity GFP_Atg8_acetylated_3: float64
+  Leading potential contaminants: object
+  Leading proteins: object
+  Missing Ctrl_acetylated: int64
+  Missing Ctrl_acetylated_1: bool
+  Missing Ctrl_acetylated_2: bool
+  Missing Ctrl_acetylated_3: bool
+  Missing GFP_Atg8_acetylated: int64
+  Missing GFP_Atg8_acetylated_1: bool
+  Missing GFP_Atg8_acetylated_2: bool
+  Missing GFP_Atg8_acetylated_3: bool
+  Missing total: int64
+  Molecular weight [kDa]: float64
+  Organism: object
+  P-value GFP_Atg8_acetylated vs Ctrl_acetylated: float64
+  Potential contaminant: bool
+  Protein: object
+  Protein Existence: object
+  Protein ID: object
+  Protein Probability: float64
+  Protein entry name: object
+  Protein length: int64
+  Protein name: object
+  Protein reported by software: object
+  Ratio [log2] GFP_Atg8_acetylated vs Ctrl_acetylated: float64
+  Representative protein: object
+  Sequence coverage: float64
+  Spectral count Combined: int64
+  Spectral count Ctrl_acetylated_1: int64
+  Spectral count Ctrl_acetylated_2: int64
+  Spectral count Ctrl_acetylated_3: int64
+  Spectral count GFP_Atg8_acetylated_1: int64
+  Spectral count GFP_Atg8_acetylated_2: int64
+  Spectral count GFP_Atg8_acetylated_3: int64
+  Top Peptide Probability: float64
+  Total peptides: int64
+  Total spectral count Combined: int64
+  Total spectral count Ctrl_acetylated_1: int64
+  Total spectral count Ctrl_acetylated_2: int64
+  Total spectral count Ctrl_acetylated_3: int64
+  Total spectral count GFP_Atg8_acetylated_1: int64
+  Total spectral count GFP_Atg8_acetylated_2: int64
+  Total spectral count GFP_Atg8_acetylated_3: int64
+  Unique spectral count Combined: int64
+  Unique spectral count Ctrl_acetylated_1: int64
+  Unique spectral count Ctrl_acetylated_2: int64
+  Unique spectral count Ctrl_acetylated_3: int64
+  Unique spectral count GFP_Atg8_acetylated_1: int64
+  Unique spectral count GFP_Atg8_acetylated_2: int64
+  Unique spectral count GFP_Atg8_acetylated_3: int64
+  Valid: bool
+  iBAQ intensity Ctrl_acetylated_1: float64
+  iBAQ intensity Ctrl_acetylated_2: float64
+  iBAQ intensity Ctrl_acetylated_3: float64
+  iBAQ intensity GFP_Atg8_acetylated_1: float64
+  iBAQ intensity GFP_Atg8_acetylated_2: float64
+  iBAQ intensity GFP_Atg8_acetylated_3: float64
+  iBAQ peptides: int64
+Expression columns:
+- Expression Ctrl_acetylated_1
+- Expression Ctrl_acetylated_2
+- Expression Ctrl_acetylated_3
+- Expression GFP_Atg8_acetylated_1
+- Expression GFP_Atg8_acetylated_2
+- Expression GFP_Atg8_acetylated_3
+Expression features:
+- Missing total
+- Missing Ctrl_acetylated
+- Missing GFP_Atg8_acetylated
+- Missing Ctrl_acetylated_1
+- Missing Ctrl_acetylated_2
+- Missing Ctrl_acetylated_3
+- Missing GFP_Atg8_acetylated_1
+- Missing GFP_Atg8_acetylated_2
+- Missing GFP_Atg8_acetylated_3
+- Events Ctrl_acetylated
+- Events GFP_Atg8_acetylated
+- Events total
+- Expression Ctrl_acetylated
+- Expression GFP_Atg8_acetylated
+- Adjusted p-value GFP_Atg8_acetylated vs Ctrl_acetylated
+- Average expression GFP_Atg8_acetylated vs Ctrl_acetylated
+- P-value GFP_Atg8_acetylated vs Ctrl_acetylated
+- Ratio [log2] GFP_Atg8_acetylated vs Ctrl_acetylated
+Expression sample mapping:
+  Expression Ctrl_acetylated_1: Ctrl_acetylated_1
+  Expression Ctrl_acetylated_2: Ctrl_acetylated_2
+  Expression Ctrl_acetylated_3: Ctrl_acetylated_3
+  Expression GFP_Atg8_acetylated_1: GFP_Atg8_acetylated_1
+  Expression GFP_Atg8_acetylated_2: GFP_Atg8_acetylated_2
+  Expression GFP_Atg8_acetylated_3: GFP_Atg8_acetylated_3

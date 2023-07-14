@@ -1,0 +1,11 @@
+	Sample	Experiment	Replicate	Concentration
+0	GFP_beads_NHS_Ac_0nM_1	Acetylation 0nM	1	0
+1	GFP_beads_NHS_Ac_0nM_2	Acetylation 0nM	2	0
+4	GFP_beads_NHS_Ac_100nM_1	Acetylation 100nM	1	100
+5	GFP_beads_NHS_Ac_100nM_2	Acetylation 100nM	2	100
+8	GFP_beads_NHS_Ac_500nM_1	Acetylation 500nM	1	500
+9	GFP_beads_NHS_Ac_500nM_2	Acetylation 500nM	2	500
+2	GFP_beads_NHS_Ac_1000nM_1	Acetylation 1000nM	1	1000
+3	GFP_beads_NHS_Ac_1000nM_2	Acetylation 1000nM	2	1000
+6	GFP_beads_NHS_Ac_5000nM_1	Acetylation 5000nM	1	5000
+7	GFP_beads_NHS_Ac_5000nM_2	Acetylation 5000nM	2	5000
