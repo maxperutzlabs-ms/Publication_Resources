@@ -10,10 +10,11 @@ This README gives an overview and description of all R code files used in the st
 ### Interference Modeling of Yeast-Human Dataset (Main Experiment)
 1)  **IM_v1.2__MS2_YeastHuman.Rmd**: Code to perform interference modeling and interference-correction for PSM level data of yeast-human mixture samples measured via MS2-based quantification.
 2)  **IM_v1.2__MS2_YeastHuman_PPF-basedCorrection.Rmd**: Same as 1) but 1-PPF was used instead of EIL in the interference-correction algorithm.
-3)  **functions_IM.R**: Contains larger functions called in 1) and 2).
-4)  **Evaluation_InterferenceCorrectedProteinIntensities.Rmd**: Code for evaluating interference-correction results obtained from 1) and 2) via density plots, ROC-curves and more.
-5)  **functions_ROC&Volcano.R**: Contains larger functions called in 4).
-6)  **Labeling_Efficiency_Calculation_From_MIX.Rmd** Script to estimate channel-wise TMT labeling efficiencies from mixture of TMT labeling reactions (i.e. before quenching) on the basis of partially labeled peptide intensities.
+3   **IM_v1.2__MS2_YeastHuman_stratifiedByIntensity.Rmd**: Same as 1) but data was stratified by precursor intensity to gauge noise parameter effect on different data bins.
+4)  **functions_IM.R**: Contains larger functions called in 1), 2) and 3).
+5)  **Evaluation_InterferenceCorrectedProteinIntensities.Rmd**: Code for evaluating interference-correction results obtained from 1) and 2) via density plots, ROC-curves and more.
+6)  **functions_ROC&Volcano.R**: Contains larger functions called in 5).
+7)  **Labeling_Efficiency_Calculation_From_MIX.Rmd** Script to estimate channel-wise TMT labeling efficiencies from mixture of TMT labeling reactions (i.e. before quenching) on the basis of partially labeled peptide intensities.
 
 
 ### Comparative Measurements 
