@@ -714,6 +714,7 @@ groups <- c("Group0", "Group6", "Group0", "Group6", "Group0", "Group6", "Group9"
 
 
 ## extract yeast PSMs only
+df_msms_model <- df_msms
 df_msms_model_yeast <- df_msms_model[grepl(df_msms_model$Proteins, pattern="YEAST") & !grepl(df_msms_model$Proteins, pattern="HUMAN"), ]
 dim(df_msms_model_yeast)
 
@@ -751,6 +752,22 @@ interference_model <- rlm(y= df_msms_model_yeast$Y_interference,
                             psi = "psi.bisquare",
                             maxit = 10000)
 df_msms_model_yeast$fitted.values_full <- interference_model$fitted.values
+
+
+
+## Calculate pearson correlation coefficients for the different models, split by PPF=1 and PPF<1
+df_msms_model_yeast$purity_1 <- factor(ifelse(df_msms_model_yeast$PPF == 1, yes="+", no=""))
+cor(log2(df_msms_model_yeast$Y_interference+1)[df_msms_model_yeast$purity_1 == "+"], log2(df_msms_model_yeast$fitted.values_red+1)[df_msms_model_yeast$purity_1 == "+"], 
+    use= "pairwise.complete.obs")
+cor(log2(df_msms_model_yeast$Y_interference+1)[df_msms_model_yeast$purity_1 == ""], log2(df_msms_model_yeast$fitted.values_red+1)[df_msms_model_yeast$purity_1 == ""], 
+    use= "pairwise.complete.obs")
+cor(log2(df_msms_model_yeast$Y_interference+1)[df_msms_model_yeast$purity_1 == "+"], log2(df_msms_model_yeast$fitted.values_full+1)[df_msms_model_yeast$purity_1 == "+"], 
+    use= "pairwise.complete.obs")
+cor(log2(df_msms_model_yeast$Y_interference+1)[df_msms_model_yeast$purity_1 == ""], log2(df_msms_model_yeast$fitted.values_full+1)[df_msms_model_yeast$purity_1 == ""], 
+    use= "pairwise.complete.obs")
+
+
+
 
 
 ## paper-grade plot:
