@@ -11,10 +11,11 @@ Source files: [2023_madern_isobaric-tag-interference-modeling](./2023_madern_iso
 Status: Submission in process<br>
 Preprint available at biorxiv: [doi.org/10.1101/2022.06.24.497446](https://doi.org/10.1101/2022.06.24.497446)
 
-**Chemical acetylation of ligands and two-step digestion protocol for reducing co-digestion in affinity purification-mass spectrometry**<br>
+**Chemical Acetylation of Ligands and Two-Step Digestion Protocol for Reducing Codigestion in Affinity Purification–Mass Spectrometry**<br>
 *David M. Hollenstein, Margarita Maurer-Granofszky, Wolfgang Reiter, Dorothea Anrather, Thomas Gossenreiter, Riccardo Babic, Natascha Hartl, Claudine Kraft, Markus Hartl*<br>
 Source files: [2023_hollenstein_chemical-ligand-acetylation](./2023_hollenstein_chemical-ligand-acetylation)<br>
-Status: Submission in process
+Published in Journal of Proteome Research (September 15, 2023)<br>
+DOI: [10.1021/acs.jproteome.3c00424](https://doi.org/10.1021/acs.jproteome.3c00424)
 
 
 ## Contact
