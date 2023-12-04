@@ -1,6 +1,9 @@
 # Publication: "A causal model of ion interference enables assessment and correction of ratio compression in multiplex proteomics"
 
-This README gives an overview and description of all R code files used in the study. The individual files are located in the various subfolders of this repository, which represent independent experiments and corresponding analyses. Additionally, the table **Metadata_table.xlsx** gives an overview of the Thermo raw files and associated database search result files used in each experiment. Both are available for download on PRIDE (identifier PXD040449).
+This README gives an overview and description of all R code files used in the study and which are stored in this repository. The individual R code files are located in the various subfolders of this repository, which correspond to independent experiments and associated analyses. 
+
+Additionally, table **Metadata_table.xlsx** gives an overview of the Thermo raw files and associated database search result files used in each experiment. Both are available for download on PRIDE (identifier PXD040449). Moreover, the document **FAQ Madern et al.docx** serves to answer frequently asked questions for readers of our work.
+
 
 <br>
 <br>
