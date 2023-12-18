@@ -8,8 +8,8 @@ Welcome to the publication resources repository of the Mass Spectrometry Facilit
 **A Causal Model of Ion Interference Enables Assessment and Correction of Ratio Compression in Multiplex Proteomics**<br>
 *Moritz Madern, Wolfgang Reiter, Florian Stanek, Natascha Hartl, Karl Mechtler, Markus Hartl*<br>
 Source files: [2023_madern_isobaric-tag-interference-modeling](./2023_madern_isobaric-tag-interference-modeling)<br>
-Status: Submission in process<br>
-Preprint available at biorxiv: [doi.org/10.1101/2022.06.24.497446](https://doi.org/10.1101/2022.06.24.497446)
+Published in Molecular and Cellular Proteomics (December 12, 2023)<br>
+DOI: [10.1016/j.mcpro.2023.100694](https://doi.org/10.1016/j.mcpro.2023.100694)
 
 **Chemical Acetylation of Ligands and Two-Step Digestion Protocol for Reducing Codigestion in Affinity Purification–Mass Spectrometry**<br>
 *David M. Hollenstein, Margarita Maurer-Granofszky, Wolfgang Reiter, Dorothea Anrather, Thomas Gossenreiter, Riccardo Babic, Natascha Hartl, Claudine Kraft, Markus Hartl*<br>
